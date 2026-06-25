@@ -1,0 +1,21 @@
+{
+  "action": "opened",
+  "issue": {
+    "id": 101,
+    "number": 42,
+    "title": "Login button breaks on mobile Safari",
+    "body": "Steps to reproduce: open the site on iPhone and tap login.",
+    "html_url": "https://github.com/example/repo/issues/42",
+    "user": {
+      "login": "octocat"
+    }
+  },
+  "repository": {
+    "id": 999,
+    "full_name": "example/repo"
+  },
+  "sender": {
+    "login": "octocat"
+  }
+}
+

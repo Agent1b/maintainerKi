@@ -1,0 +1,184 @@
+# maintainerKi Installation Guide
+
+This guide is for maintainers who want maintainerKi running without digging through the codebase first.
+
+## What you need
+
+- A GitHub account
+- A GitHub App that is installed on the repositories you want to monitor
+- Docker Desktop or Docker Engine
+- Your GitHub App private key `.pem` file
+- Your GitHub App webhook secret
+
+## Option A: local development install
+
+### 1. Create the base config
+
+Copy:
+
+- `.env.example`
+
+to:
+
+- `.env`
+
+### 2. Install backend dependencies
+
+```bash
+python3 -m venv .venv
+./.venv/bin/pip install -r requirements.txt
+```
+
+If you want semantic duplicate detection instead of hashing-based duplicate detection, also run:
+
+```bash
+./.venv/bin/pip install -r requirements.semantic-duplicates.txt
+```
+
+### 3. Install dashboard dependencies
+
+```bash
+cd dashboard
+npm install
+cd ..
+```
+
+### 4. Run the setup wizard
+
+```bash
+./.venv/bin/python -m scripts.setup_wizard
+```
+
+The wizard will test your GitHub App credentials and create:
+
+- `.env.local`
+
+### 5. Start infrastructure
+
+```bash
+make infra-up
+```
+
+This starts:
+
+- PostgreSQL
+- Redis
+
+### 6. Start maintainerKi
+
+API:
+
+```bash
+./.venv/bin/uvicorn server.main:app --host 127.0.0.1 --port 8000
+```
+
+Worker:
+
+```bash
+./.venv/bin/celery -A worker.celery_app.celery_app worker --loglevel=INFO --concurrency=2
+```
+
+Dashboard:
+
+```bash
+cd dashboard
+npm run dev -- --host 127.0.0.1 --port 3000
+```
+
+### 7. Open the dashboard
+
+- [http://127.0.0.1:3000](http://127.0.0.1:3000)
+
+## Option B: packaged production-style install
+
+### 1. Create the production env file
+
+Copy:
+
+- `.env.production.example`
+
+to:
+
+- `.env.production`
+
+### 2. Fill in the required values
+
+You must set at least:
+
+- `GITHUB_WEBHOOK_SECRET`
+- `GITHUB_APP_ID`
+- `GITHUB_PRIVATE_KEY_HOST_PATH`
+- `GITHUB_PRIVATE_KEY_PATH`
+- `POSTGRES_PASSWORD`
+
+If you want semantic duplicate detection in the packaged stack, also set:
+
+- `INSTALL_SEMANTIC_DUPLICATES=true`
+- `DUPLICATE_EMBEDDING_PROVIDER=sentence-transformers`
+
+### 3. Build and start everything
+
+```bash
+docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
+```
+
+### 4. Open the packaged dashboard
+
+- [http://127.0.0.1:8080](http://127.0.0.1:8080)
+
+### 5. Point your GitHub App webhook to the packaged stack
+
+Use:
+
+- `http://YOUR_HOST:8080/webhooks/github` for local/LAN testing
+- `https://YOUR_DOMAIN/webhooks/github` for real production
+
+GitHub requires HTTPS for normal hosted production use.
+
+## Option C: hosted 24/7 install with HTTPS
+
+If you want maintainerKi reachable from the public internet:
+
+1. Set `APP_DOMAIN` in `.env.production`
+2. Set `ACME_EMAIL` in `.env.production`
+3. Keep `DASHBOARD_BIND_ADDRESS=127.0.0.1`
+4. Run:
+
+```bash
+make hosted-up
+```
+
+This adds Caddy in front of the dashboard and API so the public entrypoint becomes:
+
+- `https://YOUR_DOMAIN`
+
+Important:
+
+- hosted mode currently does **not** include end-user auth
+- treat it as a trusted self-hosted admin tool
+- if you expose it publicly, add your own access control in front of it
+
+Use the full deployment guide for the VPS/DNS flow:
+
+- `docs/DEPLOYMENT.md`
+
+## First-run checklist
+
+- `/healthz` returns status ok
+- the GitHub App is installed on at least one repository
+- a test issue or PR appears in the dashboard
+- labels are written back to GitHub
+- the worker logs show scoring completed successfully
+
+## If you already have SQLite development data
+
+Start Postgres and run:
+
+```bash
+set -a
+source .env
+set +a
+./.venv/bin/python -m scripts.migrate_sqlite_to_postgres --source maintainerki_dev.db --target "$DATABASE_URL"
+```
+
+That copies your local dev contributions and feedback into PostgreSQL **only if the target maintainerKi tables are empty**. If you intentionally want to wipe the target tables first, rerun with `--force-reset-target`.
