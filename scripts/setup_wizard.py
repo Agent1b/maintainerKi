@@ -156,9 +156,10 @@ def main() -> None:
             )
         )
     )
+    output_path.chmod(0o600)
 
     repo_summary = ", ".join(monitored_repositories) if monitored_repositories else "all installed repos"
-    print(f"\nWrote setup to {output_path}")
+    print(f"\nWrote setup to {output_path} with mode 0600")
     print(f"Monitoring: {repo_summary}")
     print("Next step: restart the API and worker so the new settings are picked up.")
 

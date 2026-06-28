@@ -134,3 +134,58 @@ def test_lists_installations_and_repositories(tmp_path: Path) -> None:
     assert client.get_authenticated_app()["name"] == "maintainerki-dev"
     assert client.list_installations() == [{"id": 991}]
     assert client.list_installation_repositories(991) == [{"full_name": "example/repo"}]
+
+
+def test_apply_labels_retries_transient_transport_error(tmp_path: Path, monkeypatch) -> None:
+    private_key_path = _write_private_key(tmp_path)
+    attempts = {"installation": 0}
+    seen_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr("server.github_client.time.sleep", lambda *_args, **_kwargs: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_calls.append((request.method, request.url.path))
+
+        if request.url.path == "/repos/example/repo/installation":
+            attempts["installation"] += 1
+            if attempts["installation"] == 1:
+                raise httpx.ConnectError("temporary eof", request=request)
+            return httpx.Response(200, json={"id": 991})
+        if request.url.path == "/app/installations/991/access_tokens":
+            return httpx.Response(
+                201,
+                json={
+                    "token": "installation-token",
+                    "expires_at": "2030-01-01T00:00:00Z",
+                },
+            )
+        if request.url.path in {
+            "/repos/example/repo/labels/maintainerki%3Areview-first",
+            "/repos/example/repo/labels/maintainerki:review-first",
+        }:
+            return httpx.Response(200, json={"name": "maintainerki:review-first"})
+        if request.url.path == "/repos/example/repo/issues/42/labels":
+            payload = json.loads(request.content.decode("utf-8"))
+            assert payload["labels"] == ["maintainerki:review-first"]
+            return httpx.Response(200, json={"labels": payload["labels"]})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    client = GitHubAppClient(
+        app_id="123456",
+        private_key_path=str(private_key_path),
+        base_url="https://api.github.com",
+        timeout_seconds=5,
+        auto_create_labels=True,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    client.apply_labels(
+        repository_full_name="example/repo",
+        number=42,
+        labels=["maintainerki:review-first"],
+    )
+
+    assert attempts["installation"] == 2
+    assert seen_calls[:2] == [
+        ("GET", "/repos/example/repo/installation"),
+        ("GET", "/repos/example/repo/installation"),
+    ]

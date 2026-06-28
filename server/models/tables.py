@@ -8,10 +8,12 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -28,6 +30,18 @@ class ContributionRecord(Base):
     __tablename__ = "contributions"
     __table_args__ = (
         UniqueConstraint("repository", "kind", "number", name="uq_contribution_repo_kind_number"),
+        Index(
+            "ix_contributions_repo_status_received_at",
+            "repository_id",
+            "status",
+            "received_at",
+        ),
+        Index(
+            "ix_contributions_repo_duplicate_received_at",
+            "repository_id",
+            "possible_duplicate",
+            "received_at",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -61,7 +75,12 @@ class ContributionRecord(Base):
     embedding_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     duplicate_candidates_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    possible_duplicate: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    possible_duplicate: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default=false(),
+        index=True,
+    )
     top_duplicate_similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
     duplicate_checked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -81,6 +100,7 @@ class ScoringFeedbackRecord(Base):
         index=True,
     )
     maintainer_action: Mapped[str] = mapped_column(String(32), index=True)
+    actor_username: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     correct_labels_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
@@ -88,6 +108,9 @@ class ScoringFeedbackRecord(Base):
 
 class WebhookDeliveryRecord(Base):
     __tablename__ = "webhook_deliveries"
+    __table_args__ = (
+        Index("ix_webhook_deliveries_status_queued_at", "status", "queued_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     delivery_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
@@ -108,4 +131,8 @@ class WebhookDeliveryRecord(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )

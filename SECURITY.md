@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-maintainerKi is currently in alpha.
+maintainerKi is currently in beta for self-hosted single-admin use.
 
 At the moment, security fixes should be assumed to target:
 
@@ -13,7 +13,10 @@ At the moment, security fixes should be assumed to target:
 
 Please do **not** open a public GitHub issue for a security vulnerability.
 
-Instead, report it privately to the project maintainer first through whatever private contact channel is listed on the repository profile or release notes.
+Instead, use a **private reporting path**:
+
+- if GitHub private vulnerability reporting is enabled for the repository, use that
+- otherwise contact the project maintainer through a private contact channel listed on the repository profile or release notes before sharing details publicly
 
 When reporting, include:
 
@@ -27,9 +30,11 @@ When reporting, include:
 - GitHub webhook signature verification
 - GitHub App private key handling
 - secrets in `.env` files
+- admin password hashes and session secrets
 - dashboard rendering of user-supplied issue / PR content
 - model/provider prompt handling and logging
 - Docker deployment defaults
+- retention windows, backups, and who can restore them
 
 ## Secret handling reminders
 
@@ -40,8 +45,17 @@ Do not commit:
 - `.env.production`
 - private key `.pem` files
 - local databases
+- copied plaintext admin passwords or session secrets from production env files
 
 Use the example files in this repo instead:
 
 - `.env.example`
 - `.env.production.example`
+
+## Privacy and retention
+
+The repo ships with a documented retention policy and a purge helper:
+
+- see [docs/PRIVACY_RETENTION.md](docs/PRIVACY_RETENTION.md)
+- dry run: `./.venv/bin/python -m scripts.purge_old_data`
+- apply: `make purge-old-data`

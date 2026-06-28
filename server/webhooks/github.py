@@ -7,7 +7,9 @@ from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, 
 
 from server.config import settings
 from server.ingestion import enqueue_webhook_delivery
+from server.rate_limit import rate_limiter, too_many_requests
 from server.repository import register_webhook_delivery
+from server.request_meta import get_client_ip
 from server.webhooks.security import verify_github_signature
 
 router = APIRouter(prefix="/webhooks", tags=["github-webhooks"])
@@ -53,6 +55,18 @@ async def receive_github_webhook(
     x_hub_signature_256: str | None = Header(default=None),
     x_github_delivery: str | None = Header(default=None),
 ) -> dict[str, Any]:
+    rate_limit_decision = rate_limiter.consume(
+        "github-webhook",
+        get_client_ip(request),
+        limit=settings.webhook_rate_limit_requests,
+        window_seconds=settings.webhook_rate_limit_window_seconds,
+    )
+    if not rate_limit_decision.allowed:
+        raise too_many_requests(
+            "Webhook rate limit exceeded. Try again shortly.",
+            rate_limit_decision.retry_after_seconds,
+        )
+
     if not x_github_event:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

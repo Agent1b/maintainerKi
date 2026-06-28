@@ -2,14 +2,12 @@ services:
   db:
     image: postgres:16
     restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-maintainerki}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
-      POSTGRES_DB: ${POSTGRES_DB:-maintainerki}
+    env_file:
+      - ${MAINTAINERKI_ENV_FILE:-.env.production}
     volumes:
       - production-pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-maintainerki} -d ${POSTGRES_DB:-maintainerki}"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -26,6 +24,29 @@ services:
       timeout: 5s
       retries: 10
 
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_SEMANTIC_DUPLICATES: ${INSTALL_SEMANTIC_DUPLICATES:-false}
+    restart: "no"
+    env_file:
+      - ${MAINTAINERKI_ENV_FILE:-.env.production}
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+    command:
+      [
+        "python",
+        "-c",
+        "from server.db import init_database, run_database_migrations; init_database(); run_database_migrations()"
+      ]
+
   server:
     build:
       context: .
@@ -33,47 +54,25 @@ services:
       args:
         INSTALL_SEMANTIC_DUPLICATES: ${INSTALL_SEMANTIC_DUPLICATES:-false}
     restart: unless-stopped
+    env_file:
+      - ${MAINTAINERKI_ENV_FILE:-.env.production}
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       APP_ENV: production
-      DEBUG_API_ENABLED: ${DEBUG_API_ENABLED:-false}
       HOST: 0.0.0.0
       PORT: 8000
-      DATABASE_URL: postgresql://${POSTGRES_USER:-maintainerki}:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-maintainerki}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
-      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
-      GITHUB_APP_ID: ${GITHUB_APP_ID}
-      GITHUB_PRIVATE_KEY_PATH: ${GITHUB_PRIVATE_KEY_PATH}
-      GITHUB_API_BASE_URL: ${GITHUB_API_BASE_URL:-https://api.github.com}
-      GITHUB_LABEL_WRITEBACK_ENABLED: ${GITHUB_LABEL_WRITEBACK_ENABLED:-true}
-      GITHUB_AUTO_CREATE_LABELS: ${GITHUB_AUTO_CREATE_LABELS:-true}
-      GITHUB_WRITEBACK_TIMEOUT_SECONDS: ${GITHUB_WRITEBACK_TIMEOUT_SECONDS:-30}
-      GITHUB_DUPLICATE_COMMENTS_ENABLED: ${GITHUB_DUPLICATE_COMMENTS_ENABLED:-true}
-      MONITORED_REPOSITORIES: ${MONITORED_REPOSITORIES:-}
-      SCORER_PROVIDER: ${SCORER_PROVIDER:-ollama}
-      SCORER_TIMEOUT_SECONDS: ${SCORER_TIMEOUT_SECONDS:-60}
-      SCORER_TEMPERATURE: ${SCORER_TEMPERATURE:-0.1}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.6:27b}
-      OLLAMA_TEMPERATURE: ${OLLAMA_TEMPERATURE:-0.1}
-      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-5m}
-      DUPLICATE_EMBEDDING_PROVIDER: ${DUPLICATE_EMBEDDING_PROVIDER:-hashing}
-      DUPLICATE_EMBEDDING_MODEL: ${DUPLICATE_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
-      DUPLICATE_SIMILARITY_THRESHOLD: ${DUPLICATE_SIMILARITY_THRESHOLD:-0.8}
-      DUPLICATE_MAX_CANDIDATES: ${DUPLICATE_MAX_CANDIDATES:-3}
-      DUPLICATE_LABEL_NAME: ${DUPLICATE_LABEL_NAME:-maintainerki:possible-duplicate}
-      DASHBOARD_ALLOWED_ORIGINS: ${DASHBOARD_ALLOWED_ORIGINS:-http://localhost:8080}
       HF_HOME: /tmp/huggingface
-      SUSPICIOUS_SCORE_THRESHOLD: ${SUSPICIOUS_SCORE_THRESHOLD:-70}
-      NEEDS_INFO_COMPLETENESS_THRESHOLD: ${NEEDS_INFO_COMPLETENESS_THRESHOLD:-40}
-      REVIEW_FIRST_THRESHOLD: ${REVIEW_FIRST_THRESHOLD:-80}
-      WORTH_A_LOOK_THRESHOLD: ${WORTH_A_LOOK_THRESHOLD:-55}
     volumes:
       - ${GITHUB_PRIVATE_KEY_HOST_PATH}:${GITHUB_PRIVATE_KEY_PATH}:ro
       - production-model-cache:/tmp/huggingface
@@ -86,7 +85,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import json, urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/healthz')); assert data['status']=='ok'"
+          "import json, urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/readyz')); assert data['status']=='ok'"
         ]
       interval: 20s
       timeout: 5s
@@ -99,43 +98,23 @@ services:
       args:
         INSTALL_SEMANTIC_DUPLICATES: ${INSTALL_SEMANTIC_DUPLICATES:-false}
     restart: unless-stopped
+    env_file:
+      - ${MAINTAINERKI_ENV_FILE:-.env.production}
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       APP_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-maintainerki}:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-maintainerki}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
-      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
-      GITHUB_APP_ID: ${GITHUB_APP_ID}
-      GITHUB_PRIVATE_KEY_PATH: ${GITHUB_PRIVATE_KEY_PATH}
-      GITHUB_API_BASE_URL: ${GITHUB_API_BASE_URL:-https://api.github.com}
-      GITHUB_LABEL_WRITEBACK_ENABLED: ${GITHUB_LABEL_WRITEBACK_ENABLED:-true}
-      GITHUB_AUTO_CREATE_LABELS: ${GITHUB_AUTO_CREATE_LABELS:-true}
-      GITHUB_WRITEBACK_TIMEOUT_SECONDS: ${GITHUB_WRITEBACK_TIMEOUT_SECONDS:-30}
-      GITHUB_DUPLICATE_COMMENTS_ENABLED: ${GITHUB_DUPLICATE_COMMENTS_ENABLED:-true}
-      MONITORED_REPOSITORIES: ${MONITORED_REPOSITORIES:-}
-      SCORER_PROVIDER: ${SCORER_PROVIDER:-ollama}
-      SCORER_TIMEOUT_SECONDS: ${SCORER_TIMEOUT_SECONDS:-60}
-      SCORER_TEMPERATURE: ${SCORER_TEMPERATURE:-0.1}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.6:27b}
-      OLLAMA_TEMPERATURE: ${OLLAMA_TEMPERATURE:-0.1}
-      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-5m}
-      DUPLICATE_EMBEDDING_PROVIDER: ${DUPLICATE_EMBEDDING_PROVIDER:-hashing}
-      DUPLICATE_EMBEDDING_MODEL: ${DUPLICATE_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
-      DUPLICATE_SIMILARITY_THRESHOLD: ${DUPLICATE_SIMILARITY_THRESHOLD:-0.8}
-      DUPLICATE_MAX_CANDIDATES: ${DUPLICATE_MAX_CANDIDATES:-3}
-      DUPLICATE_LABEL_NAME: ${DUPLICATE_LABEL_NAME:-maintainerki:possible-duplicate}
       HF_HOME: /tmp/huggingface
-      SUSPICIOUS_SCORE_THRESHOLD: ${SUSPICIOUS_SCORE_THRESHOLD:-70}
-      NEEDS_INFO_COMPLETENESS_THRESHOLD: ${NEEDS_INFO_COMPLETENESS_THRESHOLD:-40}
-      REVIEW_FIRST_THRESHOLD: ${REVIEW_FIRST_THRESHOLD:-80}
-      WORTH_A_LOOK_THRESHOLD: ${WORTH_A_LOOK_THRESHOLD:-55}
     volumes:
       - ${GITHUB_PRIVATE_KEY_HOST_PATH}:${GITHUB_PRIVATE_KEY_PATH}:ro
       - production-model-cache:/tmp/huggingface

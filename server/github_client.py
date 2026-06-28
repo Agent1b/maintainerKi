@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 from urllib.parse import quote
+import time
 
 import httpx
 import jwt
@@ -21,6 +22,7 @@ _DEFAULT_HEADERS = {
     "X-GitHub-Api-Version": "2022-11-28",
     "User-Agent": "maintainerKi/0.1.0",
 }
+_TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,29 +415,73 @@ class GitHubAppClient:
         expected_statuses: set[int],
     ) -> httpx.Response:
         request_headers = {**_DEFAULT_HEADERS, **headers}
-        try:
-            client = self._http_client or self._get_or_create_owned_client()
-            response = client.request(
-                method,
-                f"{self.base_url}{path}",
-                headers=request_headers,
-                json=json,
-                timeout=self.timeout_seconds,
-            )
-        except httpx.HTTPError as exc:
-            raise GitHubWritebackError(f"GitHub API request failed: {exc}") from exc
+        retryable = _is_retryable_request(method=method, path=path)
+        max_attempts = 3 if retryable else 1
+        response: httpx.Response | None = None
 
-        if response.status_code not in expected_statuses:
-            message = _extract_github_error_message(response)
-            raise GitHubWritebackError(
-                f"GitHub API {method} {path} failed with status {response.status_code}: {message}"
-            )
+        for attempt in range(1, max_attempts + 1):
+            try:
+                client = self._http_client or self._get_or_create_owned_client()
+                response = client.request(
+                    method,
+                    f"{self.base_url}{path}",
+                    headers=request_headers,
+                    json=json,
+                    timeout=self.timeout_seconds,
+                )
+            except httpx.HTTPError as exc:
+                if retryable and attempt < max_attempts:
+                    logger.warning(
+                        "Transient GitHub API transport failure for %s %s (attempt %s/%s): %s",
+                        method,
+                        path,
+                        attempt,
+                        max_attempts,
+                        exc,
+                    )
+                    self._reset_owned_client()
+                    time.sleep(0.5 * attempt)
+                    continue
+                raise GitHubWritebackError(f"GitHub API request failed: {exc}") from exc
+
+            if (
+                retryable
+                and response.status_code in _TRANSIENT_STATUS_CODES
+                and attempt < max_attempts
+            ):
+                logger.warning(
+                    "Transient GitHub API status for %s %s (attempt %s/%s): %s",
+                    method,
+                    path,
+                    attempt,
+                    max_attempts,
+                    response.status_code,
+                )
+                self._reset_owned_client()
+                time.sleep(0.5 * attempt)
+                continue
+
+            if response.status_code not in expected_statuses:
+                message = _extract_github_error_message(response)
+                raise GitHubWritebackError(
+                    f"GitHub API {method} {path} failed with status {response.status_code}: {message}"
+                )
+            return response
+
+        assert response is not None
         return response
 
     def _get_or_create_owned_client(self) -> httpx.Client:
         if self._owned_http_client is None:
             self._owned_http_client = httpx.Client(timeout=self.timeout_seconds)
         return self._owned_http_client
+
+    def _reset_owned_client(self) -> None:
+        if self._http_client is not None:
+            return
+        if self._owned_http_client is not None:
+            self._owned_http_client.close()
+            self._owned_http_client = None
 
     def _paginate_app_list(self, path: str) -> list[dict[str, Any]]:
         page = 1
@@ -503,6 +549,17 @@ def apply_score_labels(
         event["repository"],
     )
     return True
+
+
+def _is_retryable_request(*, method: str, path: str) -> bool:
+    normalized_method = method.upper().strip()
+    if normalized_method in {"GET", "HEAD"}:
+        return True
+    if normalized_method == "POST" and path.endswith("/access_tokens"):
+        return True
+    if normalized_method == "POST" and path.endswith("/labels"):
+        return True
+    return False
 
 
 def _normalize_labels(labels: list[str]) -> list[str]:

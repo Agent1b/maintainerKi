@@ -1,0 +1,96 @@
+name: Feature request
+description: Suggest an improvement that fits maintainerKi's beta self-hosted roadmap
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement.
+
+        maintainerKi is still a **beta, self-hosted** project, so the best requests are concrete, scoped, and tied to a maintainer workflow.
+
+        **Do not use this form for vulnerability reports or secret exposure.** Anything security-sensitive should stay off the public tracker and follow `SECURITY.md`.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you continue
+      options:
+        - label: I checked the README, docs, and open issues for overlap.
+          required: true
+        - label: This request is not a public security disclosure.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What maintainer problem or workflow gap are you hitting?
+      placeholder: When triaging a busy repo, I cannot quickly tell which duplicate suggestions are newest.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the feature you want, including the simplest acceptable version.
+      placeholder: Add a dashboard sort option for duplicate candidates by recency.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Webhook/API
+        - Worker / scoring
+        - Duplicate detection
+        - Dashboard
+        - Deployment / operations
+        - Documentation / onboarding
+        - Open-source / GitHub automation
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment_impact
+    attributes:
+      label: Self-hosted impact
+      description: What kind of operator change would this require?
+      options:
+        - No deployment impact
+        - Docs or UX only
+        - New environment variables or config
+        - Storage / migration changes
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Self-hosted use case
+      description: Explain who would use this and when.
+      placeholder: A solo maintainer running the hosted compose overlay would use this during daily issue triage.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds, rejected ideas, or why the current behavior is not enough.
+      placeholder: I can click into every contribution manually today, but it does not scale once the queue grows.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+      description: Links, sketches, screenshots, or related issues.
+    validations:
+      required: false

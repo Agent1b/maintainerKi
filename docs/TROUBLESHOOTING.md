@@ -115,6 +115,20 @@ For the hosted HTTPS stack:
 docker compose --env-file .env.production -f docker-compose.production.yml -f docker-compose.hosted.yml config
 ```
 
+For a full repo release gate before publishing source:
+
+```bash
+make release-audit
+```
+
+If that fails immediately because the working tree is dirty, commit or stash your changes first, or use:
+
+```bash
+./.venv/bin/python -m scripts.release_audit --allow-dirty
+```
+
+for an in-progress validation pass.
+
 ## HTTPS works locally but the public domain does not
 
 Check:
@@ -134,6 +148,35 @@ docker compose --env-file .env.production -f docker-compose.production.yml -f do
 That is expected unless `DEBUG_API_ENABLED=true`.
 
 The debug API is meant for local development and is disabled by default outside development.
+
+## The hosted dashboard keeps sending me back to sign-in
+
+Check:
+
+- `ADMIN_AUTH_ENABLED=true` is set intentionally
+- `ADMIN_PASSWORD_HASH` was generated correctly
+- `SESSION_SECRET` is set and stable across restarts
+- `SESSION_COOKIE_SECURE` matches how you are accessing the app
+
+Common mistake:
+
+- using `SESSION_COOKIE_SECURE=true` on plain HTTP instead of HTTPS
+
+For real hosted production behind Caddy/HTTPS, `SESSION_COOKIE_SECURE=true` is correct.
+
+## I changed retention settings and want to preview what will be deleted
+
+Run:
+
+```bash
+./.venv/bin/python -m scripts.purge_old_data
+```
+
+If the counts look right, apply them with:
+
+```bash
+make purge-old-data
+```
 
 ## The dashboard is up but scoring is fake
 

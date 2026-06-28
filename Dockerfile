@@ -21,6 +21,8 @@ RUN pip install --upgrade pip \
 COPY server ./server
 COPY worker ./worker
 COPY scripts ./scripts
+COPY db_migrations ./db_migrations
+COPY alembic.ini ./
 COPY docs ./docs
 COPY .env.example ./
 COPY README.md ./

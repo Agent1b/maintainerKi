@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import hashlib
 import hmac
 import json
+import os
 import sys
 import uuid
 from typing import Any
@@ -38,8 +40,56 @@ def _require_ok_json(
     return payload
 
 
-def run_smoke_test(*, base_url: str, timeout_seconds: float, webhook_secret: str | None) -> int:
+def _login_if_needed(
+    client: httpx.Client,
+    *,
+    base_url: str,
+    admin_username: str | None,
+    admin_password: str | None,
+) -> None:
+    session = _require_ok_json(client, "auth session", _join_url(base_url, "/api/auth/session"))
+    if not session.get("auth_enabled"):
+        return
+    if session.get("authenticated"):
+        return
+    resolved_username = admin_username or os.getenv("MAINTAINERKI_ADMIN_USERNAME")
+    resolved_password = admin_password or os.getenv("MAINTAINERKI_ADMIN_PASSWORD")
+    if resolved_username and not resolved_password and sys.stdin.isatty():
+        resolved_password = getpass.getpass("Admin password: ")
+    if not resolved_username or not resolved_password:
+        raise RuntimeError(
+            "Admin auth is enabled, but admin credentials were not provided. Use --admin-username plus an interactive password prompt or set MAINTAINERKI_ADMIN_USERNAME / MAINTAINERKI_ADMIN_PASSWORD."
+        )
+    response = client.post(
+        _join_url(base_url, "/api/auth/login"),
+        json={"username": resolved_username, "password": resolved_password},
+    )
+    response.raise_for_status()
+    confirmed_session = _require_ok_json(
+        client,
+        "auth session after login",
+        _join_url(base_url, "/api/auth/session"),
+    )
+    if not confirmed_session.get("authenticated"):
+        raise RuntimeError("Admin login did not establish an authenticated session.")
+    print("✓ admin login")
+
+
+def run_smoke_test(
+    *,
+    base_url: str,
+    timeout_seconds: float,
+    webhook_secret: str | None,
+    admin_username: str | None = None,
+    admin_password: str | None = None,
+) -> int:
     with httpx.Client(timeout=timeout_seconds, follow_redirects=True) as client:
+        _login_if_needed(
+            client,
+            base_url=base_url,
+            admin_username=admin_username,
+            admin_password=admin_password,
+        )
         health = _require_ok_json(client, "healthz", _join_url(base_url, "/healthz"))
         if health.get("status") != "ok":
             raise RuntimeError(f"/healthz returned unexpected status: {health}")
@@ -92,8 +142,18 @@ def main() -> int:
     )
     parser.add_argument(
         "--webhook-secret",
-        default=None,
-        help="Optional GitHub webhook secret used to send a signed ping request.",
+        default=os.getenv("MAINTAINERKI_WEBHOOK_SECRET"),
+        help="Optional GitHub webhook secret used to send a signed ping request. Can also come from MAINTAINERKI_WEBHOOK_SECRET.",
+    )
+    parser.add_argument(
+        "--admin-username",
+        default=os.getenv("MAINTAINERKI_ADMIN_USERNAME"),
+        help="Admin username for deployments with dashboard auth enabled. Can also come from MAINTAINERKI_ADMIN_USERNAME.",
+    )
+    parser.add_argument(
+        "--admin-password",
+        default=os.getenv("MAINTAINERKI_ADMIN_PASSWORD"),
+        help="Admin password for deployments with dashboard auth enabled. Can also come from MAINTAINERKI_ADMIN_PASSWORD.",
     )
     args = parser.parse_args()
 
@@ -102,6 +162,8 @@ def main() -> int:
             base_url=args.base_url,
             timeout_seconds=args.timeout_seconds,
             webhook_secret=args.webhook_secret,
+            admin_username=args.admin_username,
+            admin_password=args.admin_password,
         )
     except Exception as exc:  # pragma: no cover - exercised via CLI
         print(f"Smoke test failed: {exc}", file=sys.stderr)

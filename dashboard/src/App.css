@@ -15,6 +15,14 @@
   padding: 2rem 2rem 1rem;
 }
 
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
 .app-header h1 {
   margin: 0.25rem 0 0.5rem;
   font-size: clamp(2rem, 4vw, 3rem);
@@ -149,6 +157,44 @@
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+}
+
+.auth-shell {
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+}
+
+.auth-card {
+  width: min(100%, 28rem);
+  padding: 1.5rem;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin-top: 1rem;
+}
+
+.auth-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.92rem;
+}
+
+.auth-form input {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0.75rem;
+  background: rgba(15, 23, 42, 0.78);
+  color: #f8fafc;
+  padding: 0.75rem 0.85rem;
+  font: inherit;
+}
+
+.auth-note {
+  font-size: 0.92rem;
 }
 
 .filter-grid {

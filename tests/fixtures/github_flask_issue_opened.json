@@ -1,0 +1,20 @@
+{
+  "action": "opened",
+  "issue": {
+    "id": 4729906502,
+    "number": 6065,
+    "title": "Add a query() route shortcut and MethodView support for HTTP QUERY (RFC 10008)",
+    "body": "The HTTP `QUERY` method was standardized in RFC 10008 (June 2026): a safe, idempotent request method that carries content in the request body. This issue tracks support for QUERY route shortcuts and MethodView handling in Flask.",
+    "html_url": "https://github.com/pallets/flask/issues/6065",
+    "user": {
+      "login": "aliunsal"
+    }
+  },
+  "repository": {
+    "id": 596892,
+    "full_name": "pallets/flask"
+  },
+  "sender": {
+    "login": "aliunsal"
+  }
+}

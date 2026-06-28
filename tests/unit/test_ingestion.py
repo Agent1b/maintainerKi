@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from server.duplicates.models import DuplicateDetectionResult, EmbeddingResult
+from server.duplicates.models import DuplicateCandidate, DuplicateDetectionResult, EmbeddingResult
 from server.ingestion import enqueue_contribution_event, enqueue_webhook_delivery, process_contribution_event
 from server.scorer.models import ScoreResult
 
@@ -116,3 +116,91 @@ def test_process_contribution_event_applies_labels_after_scoring(monkeypatch) ->
 
     assert persisted == [(_event(), score)]
     assert "maintainerki:possible-duplicate" in score.suggested_labels
+
+
+def test_process_contribution_event_posts_duplicate_comment_when_writeback_applies(monkeypatch) -> None:
+    score = ScoreResult(
+        quality=82,
+        relevance=79,
+        completeness=75,
+        suspicion=8,
+        overall_score=80,
+        summary="High-signal contribution that overlaps with an existing report.",
+        suggested_labels=["maintainerki:review-first"],
+        provider="mock",
+        model="heuristic-v1",
+        prompt_version="phase2-v1",
+    )
+
+    duplicate_result = DuplicateDetectionResult(
+        provider="hashing",
+        model="hashing-384d",
+        threshold=0.8,
+        possible_duplicate=True,
+        top_similarity=0.93,
+        candidates=[
+            DuplicateCandidate(
+                contribution_id=7,
+                repository="example/repo",
+                kind="issue",
+                number=11,
+                title="Webhook retries create duplicate scoring jobs",
+                html_url="https://github.com/example/repo/issues/11",
+                similarity=0.93,
+            )
+        ],
+    )
+
+    class DummyClient:
+        def __init__(self) -> None:
+            self.comments: list[dict[str, object]] = []
+
+        def is_configured(self) -> bool:
+            return True
+
+        def create_issue_comment(
+            self,
+            *,
+            repository_full_name: str,
+            number: int,
+            body: str,
+            marker: str,
+        ) -> None:
+            self.comments.append(
+                {
+                    "repository_full_name": repository_full_name,
+                    "number": number,
+                    "body": body,
+                    "marker": marker,
+                }
+            )
+
+    dummy_client = DummyClient()
+
+    monkeypatch.setattr("server.ingestion.score_contribution", lambda contribution: score)
+    monkeypatch.setattr(
+        "server.ingestion.detect_duplicates",
+        lambda contribution: (
+            EmbeddingResult(
+                provider="hashing",
+                model="hashing-384d",
+                normalized_text="webhook retry issue steps to reproduce included",
+                embedding=[0.2, 0.3, 0.4],
+            ),
+            duplicate_result,
+        ),
+    )
+    monkeypatch.setattr("server.ingestion.persist_scored_contribution", lambda *args, **kwargs: None)
+    monkeypatch.setattr("server.ingestion.record_scoring_result", lambda result: None)
+    monkeypatch.setattr("server.ingestion.apply_score_labels", lambda *args, **kwargs: True)
+    monkeypatch.setattr("server.ingestion.settings.github_duplicate_comments_enabled", True)
+    monkeypatch.setattr("server.ingestion.build_github_client", lambda: dummy_client)
+
+    process_contribution_event(_event())
+
+    assert len(dummy_client.comments) == 1
+    assert dummy_client.comments[0]["repository_full_name"] == "example/repo"
+    assert dummy_client.comments[0]["number"] == 42
+    assert dummy_client.comments[0]["marker"] == "<!-- maintainerki:possible-duplicate -->"
+    assert "Webhook retries create duplicate scoring jobs" in str(dummy_client.comments[0]["body"])
+    assert "#11 (issue, 93% similar)" in str(dummy_client.comments[0]["body"])

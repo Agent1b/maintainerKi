@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build audited source release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install release dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pip-audit
+          cd dashboard && npm ci
+
+      - name: Run release audit
+        run: python -m scripts.release_audit
+
+      - name: Build source snapshot
+        run: python -m scripts.export_source_snapshot --output dist/maintainerki-source-snapshot.tar.gz
+
+      - name: Upload source snapshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: maintainerki-source-snapshot
+          path: dist/maintainerki-source-snapshot.tar.gz
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/maintainerki-source-snapshot.tar.gz \
+            --verify-tag \
+            --generate-notes \
+            --title "$GITHUB_REF_NAME"

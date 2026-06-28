@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import argparse
 import subprocess
-import tarfile
 from pathlib import Path
 
 
 def _run_git(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["git", *args], check=True, capture_output=True, text=True)
+
+
+def _ensure_clean_worktree() -> None:
+    status = _run_git("status", "--porcelain").stdout.strip()
+    if status:
+        raise SystemExit(
+            "Working tree is not clean. Commit or stash changes before exporting a source release."
+        )
 
 
 def main() -> None:
@@ -22,6 +29,11 @@ def main() -> None:
         default="maintainerKi-source",
         help="Top-level folder name inside the archive.",
     )
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Allow exporting from HEAD even when the working tree has uncommitted changes.",
+    )
     args = parser.parse_args()
 
     try:
@@ -31,17 +43,24 @@ def main() -> None:
             "No git commit exists yet. Create a tracked source snapshot commit before exporting a source release."
         ) from exc
 
-    tracked = _run_git("ls-files", "-z").stdout.split("\0")
-    tracked_files = [Path(item) for item in tracked if item]
-    if not tracked_files:
-        raise SystemExit("No tracked files were found. Commit the project files first.")
+    if not args.allow_dirty:
+        _ensure_clean_worktree()
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with tarfile.open(output_path, "w:gz") as archive:
-        for path in tracked_files:
-            archive.add(path, arcname=f"{args.prefix}/{path.as_posix()}")
+    subprocess.run(
+        [
+            "git",
+            "archive",
+            "--format=tar.gz",
+            f"--prefix={args.prefix}/",
+            "-o",
+            str(output_path),
+            "HEAD",
+        ],
+        check=True,
+    )
 
     print(f"Wrote safe source snapshot to {output_path}")
 

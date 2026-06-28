@@ -1,5 +1,6 @@
 import axios from 'axios'
 import type {
+  AuthSession,
   ContributionDetail,
   ContributionSummary,
   FeedbackPayload,
@@ -9,6 +10,7 @@ import type {
 
 const api = axios.create({
   baseURL: '/api',
+  withCredentials: true,
 })
 
 export type InboxFilters = {
@@ -18,6 +20,19 @@ export type InboxFilters = {
   duplicatesOnly?: boolean
   suspiciousOnly?: boolean
   search?: string
+}
+
+export async function fetchAuthSession(): Promise<AuthSession> {
+  const response = await api.get<AuthSession>('/auth/session')
+  return response.data
+}
+
+export async function login(username: string, password: string): Promise<void> {
+  await api.post('/auth/login', { username, password })
+}
+
+export async function logout(): Promise<void> {
+  await api.post('/auth/logout')
 }
 
 export async function fetchRepositories(): Promise<RepositorySummary[]> {

@@ -24,6 +24,41 @@ class Settings:
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = int(os.getenv("PORT", "8000"))
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
+    expose_api_docs: bool = _env_bool(
+        "EXPOSE_API_DOCS",
+        os.getenv("APP_ENV", "development").lower() != "production",
+    )
+    detailed_public_health: bool = _env_bool(
+        "DETAILED_PUBLIC_HEALTH",
+        os.getenv("APP_ENV", "development").lower() != "production",
+    )
+    trusted_hosts: str = os.getenv("TRUSTED_HOSTS", "")
+    admin_auth_enabled: bool = _env_bool(
+        "ADMIN_AUTH_ENABLED",
+        bool(os.getenv("ADMIN_PASSWORD_HASH") or os.getenv("ADMIN_PASSWORD")),
+    )
+    admin_username: str = os.getenv("ADMIN_USERNAME", "admin")
+    admin_password_hash: str = os.getenv("ADMIN_PASSWORD_HASH", "")
+    admin_password: str = os.getenv("ADMIN_PASSWORD", "")
+    session_secret: str = os.getenv("SESSION_SECRET", "")
+    session_not_before_epoch: int = int(os.getenv("SESSION_NOT_BEFORE_EPOCH", "0"))
+    session_cookie_name: str = os.getenv("SESSION_COOKIE_NAME", "maintainerki_session")
+    session_ttl_seconds: int = int(os.getenv("SESSION_TTL_SECONDS", "43200"))
+    session_cookie_secure: bool = _env_bool(
+        "SESSION_COOKIE_SECURE",
+        os.getenv("APP_ENV", "development").lower() == "production",
+    )
+    login_rate_limit_attempts: int = int(os.getenv("LOGIN_RATE_LIMIT_ATTEMPTS", "5"))
+    login_rate_limit_window_seconds: int = int(
+        os.getenv("LOGIN_RATE_LIMIT_WINDOW_SECONDS", "300")
+    )
+    login_rate_limit_block_seconds: int = int(
+        os.getenv("LOGIN_RATE_LIMIT_BLOCK_SECONDS", "900")
+    )
+    webhook_rate_limit_requests: int = int(os.getenv("WEBHOOK_RATE_LIMIT_REQUESTS", "240"))
+    webhook_rate_limit_window_seconds: int = int(
+        os.getenv("WEBHOOK_RATE_LIMIT_WINDOW_SECONDS", "60")
+    )
     debug_api_enabled: bool = _env_bool(
         "DEBUG_API_ENABLED",
         os.getenv("APP_ENV", "development").lower() == "development",
@@ -93,6 +128,11 @@ class Settings:
         "DASHBOARD_ALLOWED_ORIGINS",
         "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173",
     )
+    webhook_retention_days: int = int(os.getenv("WEBHOOK_RETENTION_DAYS", "30"))
+    contribution_body_retention_days: int = int(
+        os.getenv("CONTRIBUTION_BODY_RETENTION_DAYS", "90")
+    )
+    feedback_note_retention_days: int = int(os.getenv("FEEDBACK_NOTE_RETENTION_DAYS", "365"))
     suspicious_score_threshold: int = int(os.getenv("SUSPICIOUS_SCORE_THRESHOLD", "70"))
     needs_info_completeness_threshold: int = int(
         os.getenv("NEEDS_INFO_COMPLETENESS_THRESHOLD", "40")

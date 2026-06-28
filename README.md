@@ -6,7 +6,7 @@ It receives GitHub webhooks, scores new contributions, flags likely duplicates, 
 
 ## Project status
 
-- alpha / MVP
+- beta / self-hosted MVP
 - self-hosted only
 - bring your own GitHub App
 - bring your own model provider
@@ -42,7 +42,7 @@ Duplicate detection providers:
 3. Optional semantic duplicate detection:
    - `./.venv/bin/pip install -r requirements.semantic-duplicates.txt`
 4. Install dashboard dependencies:
-   - `cd dashboard && npm install`
+   - `cd dashboard && npm ci`
 5. Start infrastructure:
    - `make infra-up`
 6. Start the API:
@@ -88,7 +88,7 @@ maintainerKi is currently designed to be used like this:
 - you choose your own model provider
 - you keep control of your own secrets and infrastructure
 
-That means maintainerKi is suitable for an alpha self-hosted open-source source release even without an official hosted deployment, but release archives should be produced from tracked Git files, not by zipping the raw workspace.
+That means maintainerKi is suitable for a beta self-hosted open-source source release even without an official hosted deployment, but release archives should be produced from tracked Git files, not by zipping the raw workspace.
 
 ## Important hosting note
 
@@ -98,9 +98,52 @@ The hosted deployment path is currently for:
 - internal teams
 - private admin use
 
-It does **not** include end-user authentication yet.
+It now includes a **single-admin dashboard sign-in mode** for self-hosted deployments.
 
-So if you deploy it on the public internet, put it behind your own access controls or treat it as an internal tool until auth exists.
+That helps protect the maintainer dashboard and API, but it is **not** the same thing as:
+
+- multi-user auth
+- team roles / permissions
+- public multi-tenant SaaS auth
+
+So if you deploy it on the public internet, keep treating it like a private admin tool unless you add a broader access-control layer and finish the later SaaS/auth work.
+
+The production examples now default to a safer baseline:
+
+- `EXPOSE_API_DOCS=false`
+- `DETAILED_PUBLIC_HEALTH=false`
+- `TRUSTED_HOSTS=...` for host-header validation
+- `ADMIN_AUTH_ENABLED=true`
+
+Generate auth secrets with:
+
+```bash
+make auth-secrets
+```
+
+That prints:
+
+- `ADMIN_PASSWORD_HASH=...`
+- `SESSION_SECRET=...`
+
+Paste those into `.env.production` exactly as printed. The generated values are intentionally quoted so Docker Compose treats `$` safely.
+
+For dashboard browser coverage, you can run:
+
+```bash
+cd dashboard
+npm run e2e:install
+npm run e2e
+```
+
+For a realistic local webhook simulation against a well-known public repo target, the repo also ships bundled Flask issue + PR fixtures:
+
+```bash
+export MAINTAINERKI_WEBHOOK_SECRET="YOUR_WEBHOOK_SECRET"
+make flask-webhook-test BASE_URL=http://127.0.0.1:8000
+```
+
+That sends signed `pallets/flask` issue and pull-request fixture payloads into your running maintainerKi instance so you can verify end-to-end ingest without waiting on live GitHub traffic.
 
 ## Repository layout
 
@@ -115,8 +158,11 @@ So if you deploy it on the public internet, put it behind your own access contro
 - [Installation guide](docs/INSTALLATION.md)
 - [Configuration guide](docs/CONFIGURATION.md)
 - [Deployment guide](docs/DEPLOYMENT.md)
+- [Privacy and retention](docs/PRIVACY_RETENTION.md)
+- [Release guide](docs/RELEASE.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [FAQ](docs/FAQ.md)
+- [Known limitations](docs/KNOWN_LIMITATIONS.md)
 - [Production MVP checklist](docs/PRODUCTION_MVP_CHECKLIST.md)
 - `maintainerKi-README.md` — original long-form design / roadmap notes
 
@@ -126,10 +172,13 @@ So if you deploy it on the public internet, put it behind your own access contro
 - `make infra-down`
 - `make test`
 - `make dashboard-build`
+- `make dashboard-e2e`
 - `make setup-wizard`
 - `make prod-up`
 - `make prod-down`
 - `make source-snapshot`
+- `make release-audit`
+- `make purge-old-data`
 - `make requeue-webhooks`
 
 ## Contributing and security

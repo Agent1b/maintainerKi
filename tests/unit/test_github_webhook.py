@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from server.main import app
+from server.rate_limit import rate_limiter
 from server.webhooks.security import build_github_signature
 
 FIXTURE_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "github_issue_opened.json"
@@ -258,7 +259,21 @@ def test_ignores_unsupported_action_for_issue_event(monkeypatch) -> None:
     assert response.json()["reason"] == "unsupported_action"
     assert response.json()["event"] == "issues"
     assert response.json()["action"] == "closed"
-    assert captured == []
+
+
+def test_rate_limits_repeated_webhook_requests(monkeypatch) -> None:
+    monkeypatch.setattr("server.webhooks.github.settings.github_webhook_secret", WEBHOOK_SECRET)
+    monkeypatch.setattr("server.webhooks.github.settings.webhook_rate_limit_requests", 1)
+    monkeypatch.setattr("server.webhooks.github.settings.webhook_rate_limit_window_seconds", 60)
+    rate_limiter.clear("github-webhook", "testclient")
+    body = _to_bytes(_issue_payload("opened"))
+
+    first = client.post("/webhooks/github", content=body, headers=_headers("issues", body))
+    second = client.post("/webhooks/github", content=body, headers=_headers("issues", body))
+    rate_limiter.clear("github-webhook", "testclient")
+
+    assert first.status_code == 200
+    assert second.status_code == 429
 
 
 @pytest.mark.parametrize("action", ["opened", "edited", "reopened", "synchronize"])

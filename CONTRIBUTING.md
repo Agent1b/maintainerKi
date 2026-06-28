@@ -65,6 +65,12 @@ npm run build
 cd ..
 ```
 
+Full release-style repo audit:
+
+```bash
+make release-audit
+```
+
 ### 3. Keep changes scoped
 
 Please avoid mixing unrelated changes in one pull request.
@@ -90,6 +96,7 @@ Less good:
 
 - [ ] tests pass
 - [ ] frontend lint/build pass if frontend changed
+- [ ] `make release-audit` passes for release-sensitive changes
 - [ ] docs updated if config or behavior changed
 - [ ] no secrets or machine-specific paths were introduced
 

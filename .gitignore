@@ -13,6 +13,9 @@ venv/
 .venv-mlx/
 dist/
 build/
+backups/
 node_modules/
+test_repos/
 *.db
 private-key.pem
+security_best_practices_report.md

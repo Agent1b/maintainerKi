@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from server import db as db_module
 from server.db import get_engine, init_database
 from server.duplicates.models import DuplicateCandidate, DuplicateDetectionResult, EmbeddingResult
 from server.models import Base
 from server.repository import (
+    apply_retention_purge,
+    create_scoring_feedback,
+    get_contribution_detail,
+    get_repo_stats,
     list_recent_contributions,
     list_repository_duplicate_candidates,
+    plan_retention_purge,
     persist_failed_contribution,
     persist_scored_contribution,
+    register_webhook_delivery,
 )
 from server.scorer.models import ScoreResult
 
@@ -171,9 +179,6 @@ def test_persist_failed_contribution_round_trip(tmp_path, monkeypatch) -> None:
     assert results[0]["status"] == "failed"
     assert results[0]["error"] == "model timed out"
 
-from server.repository import create_scoring_feedback, get_contribution_detail, get_repo_stats, register_webhook_delivery
-
-
 def test_register_webhook_delivery_sets_pending_and_ignores_duplicate_content(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "maintainerki_delivery.db"
     monkeypatch.setattr("server.db.settings.database_url", f"sqlite:///{db_path}")
@@ -262,3 +267,86 @@ def test_override_feedback_updates_effective_labels(tmp_path, monkeypatch) -> No
     assert detail["score"]["suggested_labels"] == ["docs", "help-wanted"]
     assert detail["score"]["ai_suggested_labels"] == ["maintainerki:review-first", "documentation"]
     assert detail["score"]["has_maintainer_label_override"] is True
+
+
+def test_retention_purge_scrubs_old_payloads_and_notes(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "maintainerki_retention.db"
+    monkeypatch.setattr("server.db.settings.database_url", f"sqlite:///{db_path}")
+    monkeypatch.setattr("server.db.settings.app_env", "test")
+    _reset_database_state()
+    init_database()
+    Base.metadata.create_all(bind=get_engine())
+
+    event = {
+        "repository": "example/repo",
+        "repository_id": 501,
+        "github_id": 12345,
+        "kind": "issue",
+        "action": "opened",
+        "number": 44,
+        "title": "Clarify install docs",
+        "body": "We should mention Apple Silicon explicitly.",
+        "author": "octocat",
+        "sender": "octocat",
+        "html_url": "https://github.com/example/repo/issues/44",
+    }
+    score = ScoreResult(
+        quality=80,
+        relevance=92,
+        completeness=70,
+        suspicion=10,
+        overall_score=83,
+        summary="Useful documentation improvement request with low suspicion.",
+        suggested_labels=["maintainerki:review-first", "documentation"],
+        provider="mlx",
+        model="local-mlx-model",
+        prompt_version="phase2-v1",
+    )
+
+    persist_scored_contribution(event, score)
+    register_webhook_delivery(event_name="issues", delivery_id="delivery-retain", event=event)
+    create_scoring_feedback(
+        1,
+        maintainer_action="agreed",
+        correct_labels=["documentation"],
+        notes="Contains maintainer note",
+        actor_username="admin",
+    )
+
+    old_timestamp = datetime.now(timezone.utc) - timedelta(days=120)
+    old_iso = old_timestamp.isoformat()
+    with get_engine().begin() as connection:
+        connection.exec_driver_sql(
+            f"UPDATE contributions SET received_at = '{old_iso}', updated_at = '{old_iso}' WHERE id = 1"
+        )
+        connection.exec_driver_sql(
+            f"UPDATE scoring_feedback SET created_at = '{old_iso}' WHERE id = 1"
+        )
+        connection.exec_driver_sql(
+            "UPDATE webhook_deliveries SET queued_at = ?, processed_at = ? WHERE delivery_id = ?",
+            (old_iso, old_iso, "delivery-retain"),
+        )
+
+    plan = plan_retention_purge(
+        webhook_retention_days=30,
+        contribution_body_retention_days=90,
+        feedback_note_retention_days=30,
+    )
+    result = apply_retention_purge(
+        webhook_retention_days=30,
+        contribution_body_retention_days=90,
+        feedback_note_retention_days=30,
+    )
+
+    assert plan == {
+        "delete_webhook_deliveries": 1,
+        "scrub_contribution_bodies": 1,
+        "scrub_feedback_notes": 1,
+    }
+    assert result == plan
+
+    detail = get_contribution_detail(1)
+    assert detail is not None
+    assert detail["body"] == ""
+    assert detail["feedback"][0]["notes"] is None
+    assert detail["feedback"][0]["actor_username"] == "admin"

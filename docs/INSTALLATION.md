@@ -39,7 +39,7 @@ If you want semantic duplicate detection instead of hashing-based duplicate dete
 
 ```bash
 cd dashboard
-npm install
+npm ci
 cd ..
 ```
 
@@ -105,6 +105,8 @@ to:
 
 You must set at least:
 
+- `ADMIN_PASSWORD_HASH`
+- `SESSION_SECRET`
 - `GITHUB_WEBHOOK_SECRET`
 - `GITHUB_APP_ID`
 - `GITHUB_PRIVATE_KEY_HOST_PATH`
@@ -115,6 +117,11 @@ If you want semantic duplicate detection in the packaged stack, also set:
 
 - `INSTALL_SEMANTIC_DUPLICATES=true`
 - `DUPLICATE_EMBEDDING_PROVIDER=sentence-transformers`
+
+Notes:
+
+- `make auth-secrets` prints Compose-safe quoted values for `ADMIN_PASSWORD_HASH` and `SESSION_SECRET`
+- if you use a non-default env file name with Compose, set `MAINTAINERKI_ENV_FILE=/path/to/that.env` alongside `--env-file`
 
 ### 3. Build and start everything
 
@@ -142,7 +149,14 @@ If you want maintainerKi reachable from the public internet:
 1. Set `APP_DOMAIN` in `.env.production`
 2. Set `ACME_EMAIL` in `.env.production`
 3. Keep `DASHBOARD_BIND_ADDRESS=127.0.0.1`
-4. Run:
+4. Generate auth values:
+
+```bash
+make auth-secrets
+```
+
+5. Paste the generated `ADMIN_PASSWORD_HASH` and `SESSION_SECRET` into `.env.production`
+6. Run:
 
 ```bash
 make hosted-up
@@ -154,9 +168,9 @@ This adds Caddy in front of the dashboard and API so the public entrypoint becom
 
 Important:
 
-- hosted mode currently does **not** include end-user auth
-- treat it as a trusted self-hosted admin tool
-- if you expose it publicly, add your own access control in front of it
+- hosted mode includes a built-in single-admin sign-in flow
+- treat it as a trusted self-hosted admin tool, not a public SaaS
+- if you expose it publicly, you should still add stronger access control in front of it for shared use
 
 Use the full deployment guide for the VPS/DNS flow:
 
@@ -165,6 +179,8 @@ Use the full deployment guide for the VPS/DNS flow:
 ## First-run checklist
 
 - `/healthz` returns status ok
+- `/api/auth/session` reports the expected auth mode
+- `make purge-old-data` works as a dry run when you want to verify retention settings later
 - the GitHub App is installed on at least one repository
 - a test issue or PR appears in the dashboard
 - labels are written back to GitHub

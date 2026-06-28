@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 from uuid import uuid4
 
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import case, delete, func, or_, select, update
 
 from server.db import session_scope
 from server.duplicates.models import DuplicateDetectionResult, EmbeddingResult
@@ -664,6 +664,7 @@ def create_scoring_feedback(
     maintainer_action: str,
     correct_labels: list[str] | None = None,
     notes: str | None = None,
+    actor_username: str | None = None,
 ) -> dict[str, Any]:
     with session_scope() as session:
         record = session.get(ContributionRecord, contribution_id)
@@ -674,6 +675,7 @@ def create_scoring_feedback(
         feedback = ScoringFeedbackRecord(
             contribution_id=contribution_id,
             maintainer_action=maintainer_action,
+            actor_username=actor_username.strip() if actor_username else None,
             correct_labels_json=_serialize_labels(cleaned_labels),
             notes=notes.strip() if notes else None,
         )
@@ -685,6 +687,136 @@ def create_scoring_feedback(
         session.flush()
         session.refresh(feedback)
         return _serialize_feedback(feedback)
+
+
+def plan_retention_purge(
+    *,
+    webhook_retention_days: int,
+    contribution_body_retention_days: int,
+    feedback_note_retention_days: int,
+    now: datetime | None = None,
+) -> dict[str, int]:
+    current_time = now or _utc_now()
+    result = {
+        "delete_webhook_deliveries": 0,
+        "scrub_contribution_bodies": 0,
+        "scrub_feedback_notes": 0,
+    }
+
+    with session_scope() as session:
+        if webhook_retention_days > 0:
+            webhook_cutoff = _retention_cutoff(current_time, webhook_retention_days)
+            result["delete_webhook_deliveries"] = int(
+                session.execute(
+                    select(func.count())
+                    .select_from(WebhookDeliveryRecord)
+                    .where(
+                        or_(
+                            WebhookDeliveryRecord.processed_at < webhook_cutoff,
+                            (
+                                WebhookDeliveryRecord.processed_at.is_(None)
+                                & (WebhookDeliveryRecord.queued_at < webhook_cutoff)
+                            ),
+                        )
+                    )
+                ).scalar_one()
+            )
+
+        if contribution_body_retention_days > 0:
+            contribution_cutoff = _retention_cutoff(current_time, contribution_body_retention_days)
+            result["scrub_contribution_bodies"] = int(
+                session.execute(
+                    select(func.count())
+                    .select_from(ContributionRecord)
+                    .where(
+                        ContributionRecord.received_at < contribution_cutoff,
+                        or_(
+                            ContributionRecord.body != "",
+                            ContributionRecord.embedding_json.is_not(None),
+                            ContributionRecord.duplicate_candidates_json.is_not(None),
+                        ),
+                    )
+                ).scalar_one()
+            )
+
+        if feedback_note_retention_days > 0:
+            feedback_cutoff = _retention_cutoff(current_time, feedback_note_retention_days)
+            result["scrub_feedback_notes"] = int(
+                session.execute(
+                    select(func.count())
+                    .select_from(ScoringFeedbackRecord)
+                    .where(
+                        ScoringFeedbackRecord.created_at < feedback_cutoff,
+                        ScoringFeedbackRecord.notes.is_not(None),
+                    )
+                ).scalar_one()
+            )
+
+    return result
+
+
+def apply_retention_purge(
+    *,
+    webhook_retention_days: int,
+    contribution_body_retention_days: int,
+    feedback_note_retention_days: int,
+    now: datetime | None = None,
+) -> dict[str, int]:
+    current_time = now or _utc_now()
+    plan = plan_retention_purge(
+        webhook_retention_days=webhook_retention_days,
+        contribution_body_retention_days=contribution_body_retention_days,
+        feedback_note_retention_days=feedback_note_retention_days,
+        now=current_time,
+    )
+
+    with session_scope() as session:
+        if plan["delete_webhook_deliveries"] > 0:
+            webhook_cutoff = _retention_cutoff(current_time, webhook_retention_days)
+            session.execute(
+                delete(WebhookDeliveryRecord).where(
+                    or_(
+                        WebhookDeliveryRecord.processed_at < webhook_cutoff,
+                        (
+                            WebhookDeliveryRecord.processed_at.is_(None)
+                            & (WebhookDeliveryRecord.queued_at < webhook_cutoff)
+                        ),
+                    )
+                )
+            )
+
+        if plan["scrub_contribution_bodies"] > 0:
+            contribution_cutoff = _retention_cutoff(current_time, contribution_body_retention_days)
+            session.execute(
+                update(ContributionRecord)
+                .where(
+                    ContributionRecord.received_at < contribution_cutoff,
+                    or_(
+                        ContributionRecord.body != "",
+                        ContributionRecord.embedding_json.is_not(None),
+                        ContributionRecord.duplicate_candidates_json.is_not(None),
+                    ),
+                )
+                .values(
+                    body="",
+                    embedding_json=None,
+                    duplicate_candidates_json=None,
+                    updated_at=current_time,
+                )
+            )
+
+        if plan["scrub_feedback_notes"] > 0:
+            feedback_cutoff = _retention_cutoff(current_time, feedback_note_retention_days)
+            session.execute(
+                update(ScoringFeedbackRecord)
+                .where(
+                    ScoringFeedbackRecord.created_at < feedback_cutoff,
+                    ScoringFeedbackRecord.notes.is_not(None),
+                )
+                .values(notes=None)
+            )
+
+    return plan
 
 
 def get_contribution_writeback_target(contribution_id: int) -> dict[str, Any] | None:
@@ -847,10 +979,15 @@ def _serialize_feedback(feedback: ScoringFeedbackRecord) -> dict[str, Any]:
         "id": feedback.id,
         "contribution_id": feedback.contribution_id,
         "maintainer_action": feedback.maintainer_action,
+        "actor_username": feedback.actor_username,
         "correct_labels": labels,
         "notes": feedback.notes,
         "created_at": feedback.created_at.isoformat() if feedback.created_at else None,
     }
+
+
+def _retention_cutoff(now: datetime, retention_days: int) -> datetime:
+    return now - timedelta(days=retention_days)
 
 
 def _triage_bucket(record: ContributionRecord) -> str:

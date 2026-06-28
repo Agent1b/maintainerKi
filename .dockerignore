@@ -17,3 +17,5 @@ dashboard/dist
 node_modules
 dist
 build
+backups
+security_best_practices_report.md

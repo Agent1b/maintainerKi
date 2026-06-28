@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from server.auth import require_admin_session
 from server.config import settings
 from server.repository import list_recent_contributions
 from server.scoring_store import list_scoring_results
@@ -17,7 +18,7 @@ router = APIRouter(
     prefix="/debug",
     tags=["debug"],
     include_in_schema=False,
-    dependencies=[Depends(require_debug_api_enabled)],
+    dependencies=[Depends(require_admin_session), Depends(require_debug_api_enabled)],
 )
 
 

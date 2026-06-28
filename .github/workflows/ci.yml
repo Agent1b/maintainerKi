@@ -3,10 +3,20 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   backend:
+    name: Backend checks
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -22,11 +32,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Validate installed dependencies
+        run: python -m pip check
+
+      - name: Compile backend sources
+        run: python -m compileall server worker scripts tests
+
       - name: Run backend tests
         run: pytest -q
 
   dashboard:
+    name: Dashboard checks
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: dashboard
@@ -49,3 +67,229 @@ jobs:
 
       - name: Build dashboard
         run: npm run build
+
+  dashboard-e2e:
+    name: Dashboard E2E
+    runs-on: ubuntu-latest
+    needs:
+      - backend
+      - dashboard
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Create backend virtualenv for Playwright
+        run: |
+          python -m venv .venv
+          ./.venv/bin/pip install --upgrade pip
+          ./.venv/bin/pip install -r requirements.txt
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: dashboard
+        run: npx playwright install --with-deps chromium
+
+      - name: Run dashboard E2E
+        working-directory: dashboard
+        env:
+          PW_PYTHON: ../.venv/bin/python
+        run: npm run e2e
+
+  production-stack-smoke:
+    name: Production stack smoke
+    runs-on: ubuntu-latest
+    needs:
+      - backend
+      - dashboard
+      - dashboard-e2e
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install smoke-test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Boot production-like stack and run smoke test
+        env:
+          ADMIN_PASSWORD: maintainerki-ci-admin-password
+          COMPOSE_PROJECT_NAME: maintainerki-ci-smoke
+          GITHUB_APP_ID: "123456"
+          GITHUB_WEBHOOK_SECRET: maintainerki-ci-webhook-secret
+          MOCK_GITHUB_PORT: "9010"
+        run: |
+          set -euo pipefail
+
+          github_key_host_path="$RUNNER_TEMP/github-app-private-key.pem"
+          openssl genrsa -out "$github_key_host_path" 2048 >/dev/null 2>&1
+
+          ci_env_file="$RUNNER_TEMP/maintainerki-ci.env"
+          python -m scripts.generate_admin_auth --password "$ADMIN_PASSWORD" > "$ci_env_file"
+          cat >> "$ci_env_file" <<EOF
+          APP_ENV=production
+          POSTGRES_USER=maintainerki
+          POSTGRES_PASSWORD=maintainerki-ci-postgres
+          POSTGRES_DB=maintainerki
+          ADMIN_AUTH_ENABLED=true
+          ADMIN_USERNAME=admin
+          SESSION_COOKIE_SECURE=false
+          GITHUB_WEBHOOK_SECRET='$GITHUB_WEBHOOK_SECRET'
+          GITHUB_APP_ID='$GITHUB_APP_ID'
+          GITHUB_PRIVATE_KEY_HOST_PATH='$github_key_host_path'
+          GITHUB_PRIVATE_KEY_PATH='/run/secrets/github-app-private-key.pem'
+          GITHUB_API_BASE_URL='http://host.docker.internal:$MOCK_GITHUB_PORT'
+          GITHUB_LABEL_WRITEBACK_ENABLED=false
+          GITHUB_AUTO_CREATE_LABELS=false
+          SCORER_PROVIDER=mock
+          DUPLICATE_EMBEDDING_PROVIDER=hashing
+          CELERY_WORKER_CONCURRENCY=1
+          DASHBOARD_BIND_ADDRESS=127.0.0.1
+          DASHBOARD_PORT=8080
+          TRUSTED_HOSTS='127.0.0.1,localhost'
+          EOF
+          export MAINTAINERKI_ENV_FILE="$ci_env_file"
+
+          cat > "$RUNNER_TEMP/mock_github_app.py" <<'PY'
+          from __future__ import annotations
+
+          import json
+          import sys
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self) -> None:  # noqa: N802
+                  if self.path != "/app":
+                      self.send_error(404)
+                      return
+                  payload = json.dumps({"id": 123456, "slug": "maintainerki-ci"}).encode("utf-8")
+                  self.send_response(200)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(payload)))
+                  self.end_headers()
+                  self.wfile.write(payload)
+
+              def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+                  return
+
+
+          if __name__ == "__main__":
+              server = ThreadingHTTPServer(("0.0.0.0", int(sys.argv[1])), Handler)
+              server.serve_forever()
+          PY
+
+          python "$RUNNER_TEMP/mock_github_app.py" "$MOCK_GITHUB_PORT" >"$RUNNER_TEMP/mock-github-app.log" 2>&1 &
+          mock_github_pid=$!
+
+          compose_cmd=(
+            docker compose
+            --project-name "$COMPOSE_PROJECT_NAME"
+            --env-file "$ci_env_file"
+            -f docker-compose.production.yml
+          )
+
+          cleanup() {
+            local exit_code=$?
+            if [ "$exit_code" -ne 0 ]; then
+              "${compose_cmd[@]}" ps || true
+              "${compose_cmd[@]}" logs --no-color --tail=200 || true
+              cat "$RUNNER_TEMP/mock-github-app.log" || true
+            fi
+            "${compose_cmd[@]}" down -v --remove-orphans || true
+            if [ -n "${mock_github_pid:-}" ]; then
+              kill "$mock_github_pid" || true
+            fi
+          }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent "http://127.0.0.1:$MOCK_GITHUB_PORT/app" >/dev/null; then
+              break
+            fi
+
+            if [ "$attempt" -eq 20 ]; then
+              echo "Mock GitHub App API failed to start." >&2
+              exit 1
+            fi
+
+            sleep 1
+          done
+
+          "${compose_cmd[@]}" config >/dev/null
+          "${compose_cmd[@]}" up -d --build
+
+          base_url="http://127.0.0.1:8080"
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent "$base_url/readyz" >/dev/null; then
+              break
+            fi
+
+            if [ "$attempt" -eq 60 ]; then
+              echo "Timed out waiting for the production-like stack to become ready." >&2
+              exit 1
+            fi
+
+            sleep 5
+          done
+
+          python -m scripts.production_smoke_test \
+            --base-url "$base_url" \
+            --timeout-seconds 20 \
+            --webhook-secret "$GITHUB_WEBHOOK_SECRET" \
+            --admin-username admin \
+            --admin-password "$ADMIN_PASSWORD"
+
+  release-hygiene:
+    name: Release hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install release audit dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pip-audit
+          cd dashboard && npm ci
+
+      - name: Run release audit
+        run: python -m scripts.release_audit

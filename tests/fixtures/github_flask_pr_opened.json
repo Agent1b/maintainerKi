@@ -1,0 +1,20 @@
+{
+  "action": "opened",
+  "pull_request": {
+    "id": 3925518853,
+    "number": 6066,
+    "title": "Add query() route shortcut and MethodView support for HTTP QUERY",
+    "body": "RFC 10008 (June 2026) standardizes the QUERY HTTP method. This pull request adds query() routing support and MethodView handling so maintainers can review a realistic framework feature contribution path.",
+    "html_url": "https://github.com/pallets/flask/pull/6066",
+    "user": {
+      "login": "aliunsal"
+    }
+  },
+  "repository": {
+    "id": 596892,
+    "full_name": "pallets/flask"
+  },
+  "sender": {
+    "login": "aliunsal"
+  }
+}

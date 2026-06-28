@@ -78,7 +78,7 @@ You will still get scored records in the dashboard.
 
 ## Can I put the hosted deployment on the public internet?
 
-You can self-host it, but the current hosted deployment does **not** include end-user authentication.
+You can self-host it, and the current hosted deployment now includes a **single-admin login flow** for the dashboard/API.
 
 So today it is better treated as:
 
@@ -86,11 +86,21 @@ So today it is better treated as:
 - a private admin dashboard
 - a trusted self-hosted service
 
-If you want a true public-facing hosted product, auth still needs to be built.
+If you want a true public-facing hosted product, you still need:
+
+- multi-user auth
+- roles / permissions
+- stronger public-edge controls
+
+So the answer is:
+
+- **private self-hosted use:** yes
+- **public SaaS / marketplace-style hosting:** not yet
 
 ## What happens if my model or queue is down?
 
-- if the queue is unavailable, maintainerKi can fall back to in-process scoring
+- if the queue is unavailable, maintainerKi stores the delivery and marks it `queue_failed`
+- after Redis / Celery is back, rerun `make requeue-webhooks`
 - if the scoring provider fails, the contribution is marked as failed instead of crashing the whole app
 
 ## Is this already marketplace-ready?

@@ -1,3 +1,9 @@
+export type AuthSession = {
+  auth_enabled: boolean
+  authenticated: boolean
+  username: string | null
+}
+
 export type RepositorySummary = {
   id: number
   name: string

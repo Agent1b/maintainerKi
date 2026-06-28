@@ -7,41 +7,41 @@ This checklist turns the README vision into a production-minded MVP that is stil
 ## 1. Product Definition
 
 ### Core promise
-- [ ] maintainerKi receives new GitHub issues and pull requests
-- [ ] maintainerKi scores them for triage value
-- [ ] maintainerKi flags likely duplicates or suspicious submissions
-- [ ] maintainerKi suggests labels and priority
-- [ ] maintainer always remains the final decision-maker
+- [x] maintainerKi receives new GitHub issues and pull requests
+- [x] maintainerKi scores them for triage value
+- [x] maintainerKi flags likely duplicates or suspicious submissions
+- [x] maintainerKi suggests labels and priority
+- [x] maintainer always remains the final decision-maker
 
 ### MVP success criteria
-- [ ] A maintainer installs the GitHub App on one or more repos
-- [ ] New issues and PRs appear in maintainerKi within a few minutes
-- [ ] Each contribution gets an analysis record with score, summary, and suggested labels
-- [ ] The maintainer can open a dashboard and work a sorted inbox
-- [ ] False positives are visible and easy to override
-- [ ] Basic observability exists so production failures are discoverable
+- [x] A maintainer installs the GitHub App on one or more repos
+- [x] New issues and PRs appear in maintainerKi within a few minutes
+- [x] Each contribution gets an analysis record with score, summary, and suggested labels
+- [x] The maintainer can open a dashboard and work a sorted inbox
+- [x] False positives are visible and easy to override
+- [x] Basic observability exists so production failures are discoverable
 
 ### Explicit non-goals for MVP
-- [ ] No auto-closing of issues or PRs
-- [ ] No auto-merging
-- [ ] No fully autonomous moderation
-- [ ] No marketplace-scale multi-tenant billing in MVP
-- [ ] No advanced learning loop that retrains custom models
+- [x] No auto-closing of issues or PRs
+- [x] No auto-merging
+- [x] No fully autonomous moderation
+- [x] No marketplace-scale multi-tenant billing in MVP
+- [x] No advanced learning loop that retrains custom models
 
 ---
 
 ## 2. MVP Scope Lock
 
 ### P0: must ship
-- [ ] GitHub App registration flow documented
-- [ ] Webhook receiver with signature verification
-- [ ] Background job queue for async processing
-- [ ] Persistence layer for repositories and contributions
-- [ ] AI scoring for quality / relevance / completeness / suspicion
-- [ ] Suggested labels written back to GitHub
-- [ ] Duplicate detection for issues and PRs
-- [ ] Dashboard inbox with filters and detail view
-- [ ] Maintainer feedback action for “good score” / “wrong score”
+- [x] GitHub App registration flow documented
+- [x] Webhook receiver with signature verification
+- [x] Background job queue for async processing
+- [x] Persistence layer for repositories and contributions
+- [x] AI scoring for quality / relevance / completeness / suspicion
+- [x] Suggested labels written back to GitHub
+- [x] Duplicate detection for issues and PRs
+- [x] Dashboard inbox with filters and detail view
+- [x] Maintainer feedback action for “good score” / “wrong score”
 - [x] Basic production deployment path
 
 ### P1: valuable but can slip
@@ -63,13 +63,13 @@ This checklist turns the README vision into a production-minded MVP that is stil
 ## 3. Repository and Developer Experience
 
 - [x] Create backend directory structure
-- [ ] Create dashboard directory structure
+- [x] Create dashboard directory structure
 - [x] Add `.gitignore`
 - [x] Add `.env.example`
 - [x] Add `requirements.txt`
 - [x] Add `docker-compose.yml`
 - [x] Add `Makefile` or task runner commands
-- [ ] Add project README at repo root when codebase becomes canonical
+- [x] Add project README at repo root when codebase becomes canonical
 - [ ] Add linting and formatting tools
 - [ ] Add pre-commit hooks
 
@@ -90,29 +90,29 @@ This checklist turns the README vision into a production-minded MVP that is stil
 - [x] Log useful metadata for ingest debugging
 - [ ] Handle GitHub App installation events
 - [ ] Store installation IDs and repo mappings
-- [ ] Handle webhook delivery replay safely
-- [ ] Add idempotency protection for duplicated deliveries
+- [x] Handle webhook delivery replay safely
+- [x] Add idempotency protection for duplicated deliveries
 
 ### Exit criteria
-- [ ] A real GitHub webhook from a test repository reaches local dev and is accepted
-- [ ] Invalid signatures are rejected
-- [ ] Supported events are turned into queued jobs
+- [x] A real GitHub webhook from a test repository reaches local dev and is accepted
+- [x] Invalid signatures are rejected
+- [x] Supported events are turned into queued jobs
 
 ---
 
 ## 5. Background Processing
 
-- [ ] Add Celery worker
-- [ ] Add Redis broker config
-- [ ] Create “process contribution” task
-- [ ] Pass only the minimal required payload to the worker
-- [ ] Add retries with backoff for transient failures
-- [ ] Mark permanent failures clearly
+- [x] Add Celery worker
+- [x] Add Redis broker config
+- [x] Create “process contribution” task
+- [x] Pass only the minimal required payload to the worker
+- [x] Add retries with backoff for transient failures
+- [x] Mark permanent failures clearly
 - [ ] Add dead-letter or failure logging strategy
 
 ### Exit criteria
-- [ ] The API returns to GitHub quickly
-- [ ] Processing still completes asynchronously even if scoring takes 30-60 seconds
+- [x] The API returns to GitHub quickly
+- [x] Processing still completes asynchronously even if scoring takes 30-60 seconds
 
 ---
 
@@ -140,106 +140,106 @@ This checklist turns the README vision into a production-minded MVP that is stil
 - [ ] timestamps
 
 ### Production data concerns
-- [ ] Add Alembic migrations
-- [ ] Define retention policy for raw payloads
+- [x] Add Alembic migrations
+- [x] Define retention policy for raw payloads
 - [ ] Decide whether to store diffs in full or summarized form
-- [ ] Define indexing strategy for repo lookup, status, created time, score, and duplicate search
+- [x] Define indexing strategy for repo lookup, status, created time, score, and duplicate search
 
 ### Exit criteria
-- [ ] A processed GitHub contribution becomes a queryable record in PostgreSQL
+- [x] A processed GitHub contribution becomes a queryable record in PostgreSQL
 
 ---
 
 ## 7. AI Scoring Engine
 
 ### Functional work
-- [ ] Build LLM client abstraction
-- [ ] Support at least one provider for MVP
-- [ ] Add provider config via environment variables
-- [ ] Create prompt template with strict JSON output
-- [ ] Parse model response robustly
-- [ ] Fail closed when model output is malformed
-- [ ] Compute overall score from category scores
-- [ ] Save raw score breakdown and one-sentence explanation
+- [x] Build LLM client abstraction
+- [x] Support at least one provider for MVP
+- [x] Add provider config via environment variables
+- [x] Create prompt template with strict JSON output
+- [x] Parse model response robustly
+- [x] Fail closed when model output is malformed
+- [x] Compute overall score from category scores
+- [x] Save raw score breakdown and one-sentence explanation
 
 ### Product quality work
 - [ ] Define score semantics clearly
 - [ ] Define suspicion scoring examples
-- [ ] Define label mapping rules from score ranges
-- [ ] Add prompt versioning
+- [x] Define label mapping rules from score ranges
+- [x] Add prompt versioning
 - [ ] Add evaluation fixtures with expected outputs
 
 ### Operational concerns
-- [ ] Set timeout budget
-- [ ] Add retry policy for provider/network failures
+- [x] Set timeout budget
+- [x] Add retry policy for provider/network failures
 - [ ] Add fallback behavior when the model is unavailable
 - [ ] Log token cost / request duration if using a paid provider
 
 ### Exit criteria
-- [ ] A new issue or PR receives consistent structured scoring without blocking webhook response
+- [x] A new issue or PR receives consistent structured scoring without blocking webhook response
 
 ---
 
 ## 8. Duplicate Detection
 
-- [ ] Choose embedding provider for MVP
-- [ ] Create title + body normalization rules
-- [ ] Generate embeddings for contributions
-- [ ] Store embeddings safely
-- [ ] Compare against repo-local history only
-- [ ] Return top N similar items with scores
-- [ ] Set similarity threshold and document why
-- [ ] Add dashboard display for duplicate candidates
-- [ ] Add GitHub label for likely duplicates
+- [x] Choose embedding provider for MVP
+- [x] Create title + body normalization rules
+- [x] Generate embeddings for contributions
+- [x] Store embeddings safely
+- [x] Compare against repo-local history only
+- [x] Return top N similar items with scores
+- [x] Set similarity threshold and document why
+- [x] Add dashboard display for duplicate candidates
+- [x] Add GitHub label for likely duplicates
 
 ### Scale path
 - [ ] Use JSON vector storage first or adopt pgvector early
 - [ ] Plan migration path if repo size grows
 
 ### Exit criteria
-- [ ] Two semantically similar issues are surfaced as likely duplicates in the UI and labels
+- [x] Two semantically similar issues are surfaced as likely duplicates in the UI and labels
 
 ---
 
 ## 9. Labeling and GitHub Write-Back
 
-- [ ] Authenticate as GitHub App installation
-- [ ] Fetch installation token safely
-- [ ] Create or apply maintainerKi labels
-- [ ] Avoid clobbering human-applied labels
+- [x] Authenticate as GitHub App installation
+- [x] Fetch installation token safely
+- [x] Create or apply maintainerKi labels
+- [x] Avoid clobbering human-applied labels
 - [ ] Add optional GitHub comment with summary
-- [ ] Record write-back result and failures
+- [x] Record write-back result and failures
 - [ ] Rate-limit outbound GitHub API calls
 
 ### Exit criteria
-- [ ] After analysis, GitHub visibly shows the suggested triage labels
+- [x] After analysis, GitHub visibly shows the suggested triage labels
 
 ---
 
 ## 10. Dashboard MVP
 
 ### Inbox page
-- [ ] Repo selector
-- [ ] Sorted queue
-- [ ] Filters by type, status, score, suspicion, duplicate
-- [ ] Search by title / author / number
-- [ ] Empty states
-- [ ] Error states
-- [ ] Loading states
+- [x] Repo selector
+- [x] Sorted queue
+- [x] Filters by type, status, score, suspicion, duplicate
+- [x] Search by title / author / number
+- [x] Empty states
+- [x] Error states
+- [x] Loading states
 
 ### Detail page
-- [ ] Full issue / PR metadata
-- [ ] Score breakdown
-- [ ] AI summary
-- [ ] Suggested labels
-- [ ] Duplicate candidates
-- [ ] Direct link to GitHub
-- [ ] Feedback controls
+- [x] Full issue / PR metadata
+- [x] Score breakdown
+- [x] AI summary
+- [x] Suggested labels
+- [x] Duplicate candidates
+- [x] Direct link to GitHub
+- [x] Feedback controls
 
 ### MVP stats
-- [ ] Queue depth
-- [ ] Pending vs reviewed counts
-- [ ] Average processing latency
+- [x] Queue depth
+- [x] Pending vs reviewed counts
+- [x] Average processing latency
 
 ### UX quality
 - [ ] Keyboard navigation works
@@ -247,46 +247,46 @@ This checklist turns the README vision into a production-minded MVP that is stil
 - [ ] Contrast and focus states are visible
 
 ### Exit criteria
-- [ ] A maintainer can triage their inbox from the dashboard without opening raw database records
+- [x] A maintainer can triage their inbox from the dashboard without opening raw database records
 
 ---
 
 ## 11. Maintainer Feedback Loop
 
-- [ ] Record “agreed” vs “wrong score”
-- [ ] Record corrected labels
-- [ ] Record duplicate confirmation or dismissal
-- [ ] Show feedback state in dashboard
+- [x] Record “agreed” vs “wrong score”
+- [x] Record corrected labels
+- [x] Record duplicate confirmation or dismissal
+- [x] Show feedback state in dashboard
 - [ ] Export feedback for later evaluation work
 
 ### Exit criteria
-- [ ] Maintainers can tell the system when it got something wrong, and the signal is stored for later improvement
+- [x] Maintainers can tell the system when it got something wrong, and the signal is stored for later improvement
 
 ---
 
 ## 12. Security, Abuse, and Privacy
 
-- [ ] Validate webhook signatures
-- [ ] Keep secrets out of source control
-- [ ] Add request size limits
-- [ ] Add structured input validation
-- [ ] Add rate limiting where appropriate
+- [x] Validate webhook signatures
+- [x] Keep secrets out of source control
+- [x] Add request size limits
+- [x] Add structured input validation
+- [x] Add rate limiting where appropriate
 - [ ] Sanitize or escape any user-generated content rendered in dashboard
 - [ ] Decide whether raw PR bodies and diffs are stored permanently
-- [ ] Document PII handling and retention
+- [x] Document PII handling and retention
 - [ ] Minimize sensitive log contents
 - [ ] Rotate GitHub credentials safely
 
 ### Exit criteria
-- [ ] The app has a documented secrets strategy, basic abuse protections, and no obvious unsafe ingest path
+- [x] The app has a documented secrets strategy, basic abuse protections, and no obvious unsafe ingest path
 
 ---
 
 ## 13. Observability and Operations
 
 - [ ] Structured application logs
-- [ ] Request IDs / delivery IDs in logs
-- [ ] Worker logs with job IDs
+- [x] Request IDs / delivery IDs in logs
+- [x] Worker logs with job IDs
 - [ ] Error reporting path
 - [x] Health checks for API, DB, Redis, worker
 - [ ] Uptime monitor
@@ -302,23 +302,23 @@ This checklist turns the README vision into a production-minded MVP that is stil
 ### Unit tests
 - [x] Webhook signature verification
 - [x] Supported vs unsupported event behavior
-- [ ] Score parsing
-- [ ] Label mapping
-- [ ] Duplicate similarity thresholds
+- [x] Score parsing
+- [x] Label mapping
+- [x] Duplicate similarity thresholds
 
 ### Integration tests
-- [ ] Webhook -> queue -> DB flow
+- [x] Webhook -> queue -> DB flow
 - [ ] Worker -> model client -> save result flow
 - [ ] GitHub App token + label write-back
-- [ ] Dashboard API endpoints
+- [x] Dashboard API endpoints
 
 ### End-to-end tests
-- [ ] Test repo sends webhook
-- [ ] Contribution appears in dashboard
-- [ ] Labels show up on GitHub
+- [x] Test repo sends webhook
+- [x] Contribution appears in dashboard
+- [x] Labels show up on GitHub
 
 ### Exit criteria
-- [ ] Core happy path and key failure paths are covered before launch
+- [x] Core happy path and key failure paths are covered before launch
 
 ---
 
@@ -341,15 +341,15 @@ This checklist turns the README vision into a production-minded MVP that is stil
 
 ## 16. Launch Readiness
 
-- [ ] Dogfood on your own repo
+- [x] Dogfood on your own repo
 - [ ] Dogfood on a second repo with different contribution patterns
 - [ ] Review top false positives
 - [ ] Review top false negatives
 - [ ] Tune score thresholds
 - [ ] Tune duplicate threshold
-- [ ] Write install guide
-- [ ] Write admin troubleshooting guide
-- [ ] Write known limitations page
+- [x] Write install guide
+- [x] Write admin troubleshooting guide
+- [x] Write known limitations page
 
 ### Exit criteria
 - [ ] You trust it enough to let another maintainer try it without sitting next to them
@@ -373,14 +373,21 @@ This checklist turns the README vision into a production-minded MVP that is stil
 ## 18. Current Status
 
 ### Done now
-- [x] Repo scaffold started
-- [x] Production MVP checklist written
-- [x] FastAPI webhook skeleton added
-- [x] Local tests for webhook behavior added
+- [x] GitHub webhook intake, signature verification, and replay/idempotency handling
+- [x] Background queue + worker path
+- [x] PostgreSQL/Redis production compose path
+- [x] AI scoring with provider abstraction (`mock`, `ollama`, `mlx`)
+- [x] Duplicate detection with dashboard visibility and GitHub duplicate comment support
+- [x] Dashboard inbox, detail view, filters, stats, and feedback loop
+- [x] Dashboard browser E2E coverage for login, inbox, detail, feedback, and logout
+- [x] Production-like Compose smoke validation with a stubbed GitHub App API
+- [x] Setup wizard, smoke test, source snapshot export, and self-hosted docs
+- [x] Hosted hardening for docs exposure, public health detail, trusted hosts, and admin auth
+- [x] Python dependency audit cleanup completed for the pinned requirements set
+- [x] Beta-level self-hosted release evidence: clean production-like Compose smoke, dashboard E2E, fixture webhook replay, and real GitHub label write-back tested
 
 ### Next best moves
-- [ ] Run Phase 1 locally
-- [ ] Register the GitHub App
-- [ ] Add installation event handling
-- [ ] Add real queue integration
-- [ ] Persist incoming webhook events
+- [ ] Dogfood on multiple real repositories over time
+- [ ] Add full multi-user auth / roles if the product grows past single-admin self-hosting
+- [ ] Add broader public-edge protections and release automation if pursuing marketplace/public SaaS
+- [ ] Expand end-to-end deployment validation on a real VPS/domain
