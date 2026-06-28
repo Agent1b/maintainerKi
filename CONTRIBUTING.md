@@ -6,7 +6,7 @@ Thanks for taking a look at maintainerKi.
 
 This project is currently:
 
-- alpha / MVP
+- beta / self-hosted MVP
 - self-hosted
 - GitHub App based
 - provider-flexible for local or remote model backends
@@ -34,6 +34,12 @@ python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
 ```
 
+If you want to run the release gate locally:
+
+```bash
+./.venv/bin/pip install pip-audit
+```
+
 Optional semantic duplicate detection:
 
 ```bash
@@ -44,7 +50,7 @@ Frontend:
 
 ```bash
 cd dashboard
-npm install
+npm ci
 cd ..
 ```
 

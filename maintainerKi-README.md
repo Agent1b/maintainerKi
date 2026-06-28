@@ -1,5 +1,7 @@
 # 🛡️ maintainerKi
 
+> Historical note: this document is an archived early design / roadmap draft. It is useful for background and product intent, but parts of the file layout and phased plan no longer match the current repository exactly.
+
 **An open source tool that helps maintainers sort through the flood of pull requests and issues.**
 
 maintainerKi is a GitHub App that automatically reads every new pull request and issue, scores its quality, detects duplicates, flags suspicious patterns, and shows maintainers a clean priority inbox — so they can focus on what matters.

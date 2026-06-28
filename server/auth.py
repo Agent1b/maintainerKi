@@ -7,6 +7,7 @@ import json
 import secrets
 import time
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request, Response, status
 
@@ -193,6 +194,30 @@ def require_admin_session(request: Request) -> SessionPrincipal | None:
     return session
 
 
+def enforce_same_origin_admin_request(request: Request) -> None:
+    if not settings.admin_auth_enabled:
+        return
+
+    source = request.headers.get("origin") or request.headers.get("referer")
+    if not source:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cross-site admin requests are not allowed.",
+        )
+
+    source_host = _normalized_netloc(source)
+    allowed_hosts = {_normalized_host_header(request.headers.get("host", ""))}
+    allowed_hosts.update(_configured_dashboard_hosts())
+
+    if source_host and source_host in allowed_hosts:
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Cross-site admin requests are not allowed.",
+    )
+
+
 def verify_login_credentials(username: str, password: str) -> bool:
     if not settings.admin_auth_enabled:
         return True
@@ -212,6 +237,27 @@ def verify_login_credentials(username: str, password: str) -> bool:
 def _looks_like_placeholder(value: str) -> bool:
     stripped = value.strip().lower()
     return stripped in PLACEHOLDER_VALUES or stripped.startswith(PLACEHOLDER_PREFIXES)
+
+
+def _configured_dashboard_hosts() -> set[str]:
+    hosts: set[str] = set()
+    for origin in settings.dashboard_allowed_origins.split(","):
+        normalized = _normalized_netloc(origin.strip())
+        if normalized:
+            hosts.add(normalized)
+    return hosts
+
+
+def _normalized_host_header(value: str) -> str:
+    return value.strip().lower()
+
+
+def _normalized_netloc(value: str) -> str:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return ""
+    return parsed.netloc.strip().lower() if parsed.netloc else ""
 
 
 def _urlsafe_b64encode(value: bytes) -> str:

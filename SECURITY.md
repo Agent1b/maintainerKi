@@ -7,7 +7,7 @@ maintainerKi is currently in beta for self-hosted single-admin use.
 At the moment, security fixes should be assumed to target:
 
 - the latest `main` branch
-- the latest unpublished local release state
+- the latest tagged beta release, when one exists
 
 ## Reporting a vulnerability
 

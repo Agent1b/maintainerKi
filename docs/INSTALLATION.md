@@ -6,9 +6,31 @@ This guide is for maintainers who want maintainerKi running without digging thro
 
 - A GitHub account
 - A GitHub App that is installed on the repositories you want to monitor
+- Python 3.12
+- Node.js 22
 - Docker Desktop or Docker Engine
 - Your GitHub App private key `.pem` file
 - Your GitHub App webhook secret
+
+The CI, Docker images, and tested local toolchain currently use Python 3.12 and Node.js 22.
+
+## Minimum GitHub App setup
+
+Before you run maintainerKi, make sure your GitHub App is configured with:
+
+- Permissions:
+  - Pull requests: **Read and write**
+  - Issues: **Read and write**
+  - Metadata: **Read-only**
+- Subscribed webhook events:
+  - **Pull request**
+  - **Issues**
+
+You will also need:
+
+- the numeric **App ID**
+- the generated private key `.pem`
+- the webhook secret you set in GitHub
 
 ## Option A: local development install
 
@@ -27,6 +49,12 @@ to:
 ```bash
 python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
+```
+
+If you want to run the full release audit locally, also install:
+
+```bash
+./.venv/bin/pip install pip-audit
 ```
 
 If you want semantic duplicate detection instead of hashing-based duplicate detection, also run:
@@ -75,8 +103,10 @@ API:
 Worker:
 
 ```bash
-./.venv/bin/celery -A worker.celery_app.celery_app worker --loglevel=INFO --concurrency=2
+./.venv/bin/celery -A worker.celery_app.celery_app worker --loglevel=INFO --pool=solo
 ```
+
+For local development, `--pool=solo` is the simplest cross-platform worker mode. The packaged stack controls worker concurrency separately through `CELERY_WORKER_CONCURRENCY`.
 
 Dashboard:
 
@@ -180,7 +210,8 @@ Use the full deployment guide for the VPS/DNS flow:
 
 - `/healthz` returns status ok
 - `/api/auth/session` reports the expected auth mode
-- `make purge-old-data` works as a dry run when you want to verify retention settings later
+- `./.venv/bin/python -m scripts.purge_old_data` works as a dry run when you want to verify retention settings later
+- `make purge-old-data` applies the retention purge when you actually want to delete expired records
 - the GitHub App is installed on at least one repository
 - a test issue or PR appears in the dashboard
 - labels are written back to GitHub

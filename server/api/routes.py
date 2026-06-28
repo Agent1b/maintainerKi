@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from pydantic import BaseModel, Field
 
 from server.auth import (
+    enforce_same_origin_admin_request,
     SessionPrincipal,
     clear_session_cookie,
     get_current_session,
@@ -113,6 +114,7 @@ def api_auth_logout(
     session: SessionPrincipal | None = Depends(get_current_session),
 ) -> Response:
     _set_no_store(response)
+    enforce_same_origin_admin_request(request)
     clear_session_cookie(response)
     logger.info(
         "Admin logout username=%s client_ip=%s",
@@ -190,12 +192,14 @@ def api_contribution_detail(contribution_id: int, response: Response) -> dict[st
 
 @protected_router.post("/contributions/{contribution_id}/feedback")
 def api_create_feedback(
+    request: Request,
     response: Response,
     contribution_id: int,
     payload: FeedbackPayload,
     session: SessionPrincipal | None = Depends(require_admin_session),
 ) -> dict[str, object]:
     _set_no_store(response)
+    enforce_same_origin_admin_request(request)
     try:
         feedback = create_scoring_feedback(
             contribution_id,

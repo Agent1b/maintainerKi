@@ -30,6 +30,12 @@ Do not release while `.env`, private keys, local databases, or machine-specific 
 make release-audit
 ```
 
+If you are running that locally outside CI, make sure `pip-audit` is installed first:
+
+```bash
+./.venv/bin/pip install pip-audit
+```
+
 That audit is the repo’s main pre-release gate for:
 
 - backend tests
@@ -88,6 +94,12 @@ git push origin main --tags
 
 Tag pushes trigger `.github/workflows/release.yml`, which reruns the release audit and publishes the tracked source snapshot as a GitHub release asset.
 
+If a curated release-notes file exists at:
+
+- `docs/releases/<tag>.md`
+
+the release workflow uses it automatically. Otherwise it falls back to GitHub-generated notes.
+
 If you publish release artifacts, prefer:
 
 - the Git tag / GitHub release source archive
@@ -113,3 +125,4 @@ python -m scripts.production_smoke_test --base-url "https://YOUR_DOMAIN"
 - [ ] docs updated for behavior/config changes
 - [ ] `make source-snapshot` succeeds
 - [ ] release tag created from audited code
+- [ ] optional curated notes added at `docs/releases/<tag>.md`

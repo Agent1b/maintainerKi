@@ -55,7 +55,7 @@ def create_app() -> FastAPI:
     validate_admin_auth_settings()
     app = FastAPI(
         title=settings.app_name,
-        version="0.1.0",
+        version="0.1.0-beta.1",
         description="GitHub triage assistant for open source maintainers.",
         lifespan=lifespan,
         docs_url="/docs" if settings.expose_api_docs else None,

@@ -11,6 +11,8 @@ from server.rate_limit import rate_limiter
 from server.repository import persist_scored_contribution
 from server.scorer.models import ScoreResult
 
+SAME_ORIGIN_HEADERS = {"Origin": "http://testserver"}
+
 
 def _reset_database_state() -> None:
     if db_module._engine is not None:
@@ -263,11 +265,66 @@ def test_admin_auth_login_round_trip_with_hashed_password(tmp_path, monkeypatch)
         assert repos_response.status_code == 200
         assert repos_response.json()["count"] == 1
 
-        logout_response = client.post("/api/auth/logout")
+        logout_response = client.post("/api/auth/logout", headers=SAME_ORIGIN_HEADERS)
         assert logout_response.status_code == 204
 
         repos_after_logout = client.get("/api/repos")
         assert repos_after_logout.status_code == 401
+
+
+def test_admin_state_changing_routes_require_allowed_origin(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "maintainerki_auth_origin.db"
+    monkeypatch.setattr("server.db.settings.database_url", f"sqlite:///{db_path}")
+    monkeypatch.setattr("server.db.settings.app_env", "test")
+    _configure_admin_auth(
+        monkeypatch,
+        enabled=True,
+        password_hash=hash_password("let-me-in"),
+    )
+    _reset_database_state()
+    init_database()
+    Base.metadata.create_all(bind=get_engine())
+    ensure_schema_upgrades()
+    _seed_contribution()
+
+    with TestClient(app) as client:
+        login = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "let-me-in"},
+        )
+        assert login.status_code == 204
+
+        repo_id = client.get("/api/repos").json()["repositories"][0]["id"]
+        contribution_id = client.get(f"/api/repos/{repo_id}/inbox").json()["items"][0]["id"]
+
+        missing_origin_feedback = client.post(
+            f"/api/contributions/{contribution_id}/feedback",
+            json={"maintainer_action": "agreed", "correct_labels": [], "notes": None},
+        )
+        assert missing_origin_feedback.status_code == 403
+
+        foreign_origin_feedback = client.post(
+            f"/api/contributions/{contribution_id}/feedback",
+            headers={"Origin": "https://evil.example.com"},
+            json={"maintainer_action": "agreed", "correct_labels": [], "notes": None},
+        )
+        assert foreign_origin_feedback.status_code == 403
+
+        same_origin_feedback = client.post(
+            f"/api/contributions/{contribution_id}/feedback",
+            headers=SAME_ORIGIN_HEADERS,
+            json={"maintainer_action": "agreed", "correct_labels": [], "notes": None},
+        )
+        assert same_origin_feedback.status_code == 200
+
+        foreign_origin_logout = client.post(
+            "/api/auth/logout",
+            headers={"Origin": "https://evil.example.com"},
+        )
+        assert foreign_origin_logout.status_code == 403
+
+        same_origin_logout = client.post("/api/auth/logout", headers=SAME_ORIGIN_HEADERS)
+        assert same_origin_logout.status_code == 204
 
 
 def test_production_status_endpoints_hide_details(monkeypatch) -> None:

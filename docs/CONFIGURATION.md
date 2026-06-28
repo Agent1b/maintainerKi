@@ -10,6 +10,16 @@ maintainerKi reads environment variables from:
 
 ## GitHub App settings
 
+Minimum GitHub App requirements:
+
+- Repository permissions:
+  - Pull requests: **Read and write**
+  - Issues: **Read and write**
+  - Metadata: **Read-only**
+- Webhook event subscriptions:
+  - **Pull request**
+  - **Issues**
+
 - `GITHUB_WEBHOOK_SECRET`
   - shared secret used to verify GitHub webhook signatures
 - `GITHUB_APP_ID`

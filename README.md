@@ -67,6 +67,16 @@ The wizard:
 - lets you choose which repositories to monitor
 - writes `.env.local` overrides for repo filters and thresholds
 
+Minimum GitHub App setup for maintainerKi:
+
+- Permissions:
+  - Pull requests: **Read and write**
+  - Issues: **Read and write**
+  - Metadata: **Read-only**
+- Subscribe to webhook events:
+  - **Pull request**
+  - **Issues**
+
 ### Packaged self-hosted stack
 
 ```bash
@@ -164,7 +174,7 @@ That sends signed `pallets/flask` issue and pull-request fixture payloads into y
 - [FAQ](docs/FAQ.md)
 - [Known limitations](docs/KNOWN_LIMITATIONS.md)
 - [Production MVP checklist](docs/PRODUCTION_MVP_CHECKLIST.md)
-- `maintainerKi-README.md` — original long-form design / roadmap notes
+- `maintainerKi-README.md` — archived early design / roadmap notes (historical reference; may not match the current file layout)
 
 ## Development commands
 
@@ -180,6 +190,12 @@ That sends signed `pallets/flask` issue and pull-request fixture payloads into y
 - `make release-audit`
 - `make purge-old-data`
 - `make requeue-webhooks`
+
+If you want to run the full release gate locally, also install:
+
+```bash
+./.venv/bin/pip install pip-audit
+```
 
 ## Contributing and security
 

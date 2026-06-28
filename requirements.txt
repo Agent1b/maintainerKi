@@ -3,7 +3,6 @@ fastapi==0.138.1
 uvicorn[standard]==0.30.0
 python-dotenv==1.2.2
 httpx==0.27.0
-httpx2==2.5.0
 sqlalchemy==2.0.41
 psycopg[binary]==3.2.13
 celery==5.4.0

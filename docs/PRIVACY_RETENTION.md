@@ -26,6 +26,11 @@ By default, maintainerKi stores:
   - optional notes
   - `actor_username` for feedback actions
 - webhook delivery rows and normalized payload snapshots
+- auth event logs and operator-visible application logs may include:
+  - admin username
+  - client IP address
+  - timestamps
+- in-memory rate-limit state uses client IP addresses transiently for login and webhook abuse controls
 
 ## Default retention windows
 
@@ -56,6 +61,16 @@ maintainerKi keeps a smaller operational record even after retention jobs run:
 - timestamps
 
 That retained subset is what keeps the dashboard, metrics, and feedback history useful after raw text is scrubbed.
+
+## What the purge job does not remove
+
+The purge job does **not** delete:
+
+- application logs written by the process, container runtime, reverse proxy, or host OS
+- operator-managed backup archives
+- transient in-memory rate-limit state that exists only until process restart or window expiry
+
+If you log to files, a central log collector, or a hosted observability stack, log retention is operator-owned and should be reviewed separately from the maintainerKi purge schedule.
 
 ## Running the purge job
 
@@ -100,5 +115,6 @@ If you are using maintainerKi for private or sensitive repositories, review and 
 
 - retention windows
 - backup retention
+- log retention
 - who can access Postgres backups
 - who can access `.env.production` and GitHub App private keys
