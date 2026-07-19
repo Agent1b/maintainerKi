@@ -23,3 +23,13 @@ def test_release_workflow_marks_hyphenated_versions_as_prereleases() -> None:
 
     assert '[[ "$GITHUB_REF_NAME" == *-* ]]' in script
     assert "release_args+=(--prerelease)" in script
+
+
+def test_production_smoke_key_is_readable_by_non_root_container() -> None:
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text())
+    steps = workflow["jobs"]["production-stack-smoke"]["steps"]
+    smoke_step = next(
+        step for step in steps if step.get("name") == "Boot production-like stack and run smoke test"
+    )
+
+    assert 'chmod 0644 "$github_key_host_path"' in smoke_step["run"]

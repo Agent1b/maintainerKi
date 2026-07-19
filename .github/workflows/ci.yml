@@ -147,6 +147,7 @@ jobs:
 
           github_key_host_path="$RUNNER_TEMP/github-app-private-key.pem"
           openssl genrsa -out "$github_key_host_path" 2048 >/dev/null 2>&1
+          chmod 0644 "$github_key_host_path"
 
           ci_env_file="$RUNNER_TEMP/maintainerki-ci.env"
           python -m scripts.generate_admin_auth --password "$ADMIN_PASSWORD" > "$ci_env_file"
