@@ -8,6 +8,12 @@ The project currently targets a self-hosted beta release model.
 
 - Ongoing polish, docs, and release automation work for the public beta repository.
 
+## v0.1.0-beta.3
+
+- Fixed the hosted production-smoke GitHub App key permissions for the non-root application container
+- Added a regression contract for the ephemeral CI key mount
+- Validated the complete public GitHub CI path, including Dashboard E2E and the production-like Docker Compose smoke test
+
 ## v0.1.0-beta.2
 
 - Fixed GitHub Actions Dashboard E2E startup by resolving the backend Python executable from the absolute workspace path

@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_HEADERS = {
     "Accept": "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "maintainerKi/0.1.0-beta.2",
+    "User-Agent": "maintainerKi/0.1.0-beta.3",
 }
 _TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
