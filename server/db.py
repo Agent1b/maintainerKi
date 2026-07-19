@@ -9,7 +9,6 @@ from urllib.parse import quote
 
 from alembic import command
 from alembic.config import Config
-from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -147,8 +146,13 @@ def run_database_migrations() -> None:
         logger.info("Bootstrapping existing database into Alembic versioning.")
         Base.metadata.create_all(bind=engine)
         ensure_schema_upgrades()
-        command.stamp(alembic_config, _get_alembic_bootstrap_revision(alembic_config))
-        command.upgrade(alembic_config, "head")
+        # create_all() builds the schema from the *current* ORM models, i.e.
+        # the schema at HEAD, not at the base revision. Stamp head directly
+        # instead of stamping the base revision and then upgrading: once a
+        # second migration exists, upgrading from base would replay it
+        # against a schema create_all() already built to match head,
+        # crashing on duplicate columns/tables.
+        command.stamp(alembic_config, "head")
         return
 
     logger.info("Applying initial Alembic migrations to empty database.")
@@ -215,10 +219,6 @@ def _build_alembic_config(database_url: str) -> Config:
     config.set_main_option("script_location", str(project_root / "db_migrations"))
     config.set_main_option("sqlalchemy.url", database_url)
     return config
-
-
-def _get_alembic_bootstrap_revision(config: Config) -> str:
-    return ScriptDirectory.from_config(config).get_base() or "head"
 
 
 def _ensure_expected_indexes(engine: Engine) -> None:

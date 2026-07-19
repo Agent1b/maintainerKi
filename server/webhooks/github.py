@@ -21,6 +21,14 @@ SUPPORTED_ACTIONS: dict[str, set[str]] = {
 }
 
 
+def _as_optional_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
+
+
 def _normalize_payload(event_name: str, payload: dict[str, Any]) -> dict[str, Any]:
     repository = payload.get("repository") or {}
     sender = payload.get("sender") or {}
@@ -28,9 +36,11 @@ def _normalize_payload(event_name: str, payload: dict[str, Any]) -> dict[str, An
     if event_name == "issues":
         subject = payload.get("issue") or {}
         kind = "issue"
+        head_sha = None
     else:
         subject = payload.get("pull_request") or {}
         kind = "pull_request"
+        head_sha = (subject.get("head") or {}).get("sha")
 
     return {
         "kind": kind,
@@ -44,6 +54,10 @@ def _normalize_payload(event_name: str, payload: dict[str, Any]) -> dict[str, An
         "repository_id": repository.get("id"),
         "author": (subject.get("user") or {}).get("login"),
         "sender": sender.get("login"),
+        "head_sha": head_sha,
+        "files_changed": _as_optional_int(subject.get("changed_files")),
+        "additions": _as_optional_int(subject.get("additions")),
+        "deletions": _as_optional_int(subject.get("deletions")),
     }
 
 
@@ -85,6 +99,15 @@ async def receive_github_webhook(
         )
 
     payload = await request.json()
+    if not isinstance(payload, dict):
+        logger.info(
+            "Rejecting webhook delivery=%s because the JSON payload was not an object.",
+            x_github_delivery,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Webhook payload must be a JSON object.",
+        )
 
     if x_github_event == "ping":
         logger.info("Received GitHub ping delivery=%s", x_github_delivery)
@@ -122,6 +145,19 @@ async def receive_github_webhook(
         }
 
     normalized = _normalize_payload(x_github_event, payload)
+    normalized_number = normalized.get("number")
+    if not isinstance(normalized_number, int) or isinstance(normalized_number, bool):
+        logger.info(
+            "Ignoring event=%s delivery=%s because the subject has no integer number.",
+            x_github_event,
+            x_github_delivery,
+        )
+        return {
+            "status": "ignored",
+            "reason": "missing_number",
+            "event": x_github_event,
+        }
+
     monitored_repositories = settings.monitored_repository_set()
     normalized_repository = str(normalized.get("repository") or "").lower()
     if monitored_repositories and normalized_repository not in monitored_repositories:

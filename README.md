@@ -70,7 +70,7 @@ The wizard:
 Minimum GitHub App setup for maintainerKi:
 
 - Permissions:
-  - Pull requests: **Read and write**
+  - Pull requests: **Read-only**
   - Issues: **Read and write**
   - Metadata: **Read-only**
 - Subscribe to webhook events:

@@ -5,6 +5,7 @@ import subprocess
 from typing import Protocol
 
 import httpx
+from pydantic import ValidationError
 
 from server.config import settings
 from server.scorer.models import ContributionInput, RawScorecard
@@ -190,7 +191,13 @@ class MlxScoringProvider:
         if output.startswith('"'):
             output = "{" + output
 
-        return RawScorecard.model_validate_json(_extract_json_object(output))
+        json_text = _extract_json_object(output)
+        try:
+            return RawScorecard.model_validate_json(json_text)
+        except ValidationError as exc:
+            raise ScoringProviderError(f"Could not validate MLX scorecard: {exc}") from exc
+        except ValueError as exc:
+            raise ScoringProviderError(f"MLX returned invalid JSON: {exc}") from exc
 
 
 def _extract_json_object(text: str) -> str:
@@ -199,6 +206,7 @@ def _extract_json_object(text: str) -> str:
         return stripped
 
     decoder = json.JSONDecoder()
+    spans: list[tuple[int, int]] = []
     candidates: list[str] = []
     for index, char in enumerate(stripped):
         if char != "{":
@@ -207,7 +215,15 @@ def _extract_json_object(text: str) -> str:
             _, end_index = decoder.raw_decode(stripped[index:])
         except json.JSONDecodeError:
             continue
-        candidates.append(stripped[index : index + end_index])
+        end = index + end_index
+        # Skip candidates nested inside an already-accepted candidate (e.g. a
+        # JSON-looking object embedded as a field's value inside the real,
+        # outer scorecard object) so they cannot outrank the outer object
+        # just because they were discovered later while scanning.
+        if any(start <= index and end <= prior_end for start, prior_end in spans):
+            continue
+        spans.append((index, end))
+        candidates.append(stripped[index:end])
 
     if not candidates:
         raise ScoringProviderError("Model output did not contain a JSON object.")

@@ -14,6 +14,7 @@ import jwt
 
 from server.config import settings
 from server.scorer.models import ScoreResult
+from server.triage import get_triage_thresholds
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,6 @@ DEFAULT_LABEL_DEFINITIONS: dict[str, LabelDefinition] = {
     ),
 }
 
-
 class GitHubWritebackError(RuntimeError):
     pass
 
@@ -92,7 +92,7 @@ class GitHubAppClient:
         private_key_path: str,
         base_url: str = "https://api.github.com",
         timeout_seconds: float = 30,
-        auto_create_labels: bool = True,
+        auto_create_labels: bool = False,
         http_client: httpx.Client | None = None,
     ) -> None:
         self.app_id = app_id.strip()
@@ -239,6 +239,84 @@ class GitHubAppClient:
             json={"body": body},
         )
         return True
+
+    def get_user_created_at(self, username: str, *, repository_full_name: str) -> datetime | None:
+        owner, repo = _split_repository_full_name(repository_full_name)
+        installation_id = self.get_repository_installation_id(owner=owner, repo=repo)
+        installation_token = self.get_installation_token(installation_id)
+
+        response = self._request_installation(
+            installation_token=installation_token,
+            method="GET",
+            path=f"/users/{quote(username, safe='')}",
+            expected_statuses={200, 404},
+        )
+        if response.status_code == 404:
+            return None
+
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise GitHubWritebackError(
+                f"GitHub returned an invalid user payload for {username!r}."
+            )
+        created_at_raw = payload.get("created_at")
+        if not created_at_raw:
+            raise GitHubWritebackError(
+                f"GitHub did not return a created_at for user {username!r}."
+            )
+        try:
+            return datetime.fromisoformat(str(created_at_raw).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise GitHubWritebackError(
+                f"GitHub returned an invalid created_at for user {username!r}: {created_at_raw!r}"
+            ) from exc
+
+    def get_pull_request_files(
+        self,
+        repository_full_name: str,
+        number: int,
+        *,
+        max_files: int,
+    ) -> list[dict[str, Any]]:
+        if max_files <= 0:
+            return []
+
+        owner, repo = _split_repository_full_name(repository_full_name)
+        installation_id = self.get_repository_installation_id(owner=owner, repo=repo)
+        installation_token = self.get_installation_token(installation_id)
+
+        per_page = min(max_files, 100)
+        page = 1
+        files: list[dict[str, Any]] = []
+        while True:
+            response = self._request_installation(
+                installation_token=installation_token,
+                method="GET",
+                path=f"/repos/{owner}/{repo}/pulls/{number}/files?per_page={per_page}&page={page}",
+            )
+            payload = response.json()
+            if not isinstance(payload, list):
+                raise GitHubWritebackError(
+                    "GitHub returned an invalid pull request files payload."
+                )
+            for item in payload:
+                if not isinstance(item, dict):
+                    continue
+                patch = item.get("patch")
+                files.append(
+                    {
+                        "filename": str(item.get("filename") or ""),
+                        "status": str(item.get("status") or ""),
+                        "additions": int(item.get("additions") or 0),
+                        "deletions": int(item.get("deletions") or 0),
+                        "patch": patch if isinstance(patch, str) else None,
+                    }
+                )
+                if len(files) >= max_files:
+                    return files
+            if not _has_next_page(response, len(payload), page):
+                return files
+            page += 1
 
     def get_repository_installation_id(self, *, owner: str, repo: str) -> int:
         cache_key = f"{owner}/{repo}".lower()
@@ -515,6 +593,7 @@ def apply_score_labels(
     event: dict[str, Any],
     score: ScoreResult,
     *,
+    possible_duplicate: bool = False,
     client: GitHubAppClient | None = None,
 ) -> bool:
     if not settings.github_label_writeback_enabled:
@@ -536,19 +615,57 @@ def apply_score_labels(
         )
         return False
 
+    writeback_labels = _derive_automated_writeback_labels(
+        score,
+        possible_duplicate=possible_duplicate,
+    )
+    if not writeback_labels:
+        logger.info(
+            "No approved automated labels to write back for %s #%s in %s.",
+            event["kind"],
+            event["number"],
+            event["repository"],
+        )
+        return False
+
     resolved_client.apply_labels(
         repository_full_name=event["repository"] or "unknown/unknown",
         number=event["number"],
-        labels=score.suggested_labels,
+        labels=writeback_labels,
     )
     logger.info(
         "Applied %s GitHub labels to %s #%s in %s.",
-        len(_normalize_labels(score.suggested_labels)),
+        len(writeback_labels),
         event["kind"],
         event["number"],
         event["repository"],
     )
     return True
+
+
+def _derive_automated_writeback_labels(
+    score: ScoreResult,
+    *,
+    possible_duplicate: bool,
+) -> list[str]:
+    """Derive write-back labels without trusting model-provided label names."""
+    thresholds = get_triage_thresholds()
+    labels: list[str] = []
+    if score.suspicion >= thresholds.suspicious_score:
+        labels.append("maintainerki:suspicious")
+    if score.completeness < thresholds.needs_info_completeness:
+        labels.append("maintainerki:needs-info")
+    if score.overall_score >= thresholds.review_first:
+        labels.append("maintainerki:review-first")
+    elif score.overall_score >= thresholds.worth_a_look:
+        labels.append("maintainerki:worth-a-look")
+    else:
+        labels.append("maintainerki:low-priority")
+    if possible_duplicate:
+        duplicate_label = settings.duplicate_label_name.strip()
+        if duplicate_label and len(duplicate_label) <= 50 and duplicate_label not in labels:
+            labels.append(duplicate_label)
+    return labels
 
 
 def _is_retryable_request(*, method: str, path: str) -> bool:

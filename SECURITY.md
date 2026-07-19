@@ -15,8 +15,10 @@ Please do **not** open a public GitHub issue for a security vulnerability.
 
 Instead, use a **private reporting path**:
 
-- if GitHub private vulnerability reporting is enabled for the repository, use that
-- otherwise contact the project maintainer through a private contact channel listed on the repository profile or release notes before sharing details publicly
+- use [GitHub private vulnerability reporting](https://github.com/Agent1b/maintainerKi/security/advisories/new)
+- if that form is unavailable, email **michbz@proton.me**
+
+Please do not include secrets in an email subject line. You should receive an acknowledgement within seven days.
 
 When reporting, include:
 

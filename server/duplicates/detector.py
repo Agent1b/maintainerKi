@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from server.config import settings
 from server.duplicates.embedder import build_embedding_result
 from server.duplicates.models import DuplicateCandidate, DuplicateDetectionResult, EmbeddingResult
@@ -48,7 +50,12 @@ def detect_duplicates(contribution: ContributionInput) -> tuple[EmbeddingResult,
 def cosine_similarity(left: list[float], right: list[float]) -> float:
     if not left or not right or len(left) != len(right):
         return 0.0
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if left_norm == 0 or right_norm == 0:
+        return 0.0
     similarity = sum(left_value * right_value for left_value, right_value in zip(left, right))
+    similarity /= left_norm * right_norm
     if similarity < 0:
         return 0.0
     if similarity > 1:

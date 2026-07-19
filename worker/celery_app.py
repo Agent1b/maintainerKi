@@ -22,6 +22,13 @@ celery_app.conf.update(
     result_serializer="json",
     accept_content=["json"],
     broker_connection_retry_on_startup=True,
+    # Bound the broker socket wait so a black-holed broker can't hang health checks
+    # (or task dispatch) for the OS TCP timeout.
+    broker_transport_options={
+        "socket_timeout": 3,
+        "socket_connect_timeout": 3,
+        "retry_on_timeout": True,
+    },
     task_always_eager=settings.celery_task_always_eager,
     task_ignore_result=True,
 )

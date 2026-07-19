@@ -19,7 +19,7 @@ The CI, Docker images, and tested local toolchain currently use Python 3.12 and 
 Before you run maintainerKi, make sure your GitHub App is configured with:
 
 - Permissions:
-  - Pull requests: **Read and write**
+  - Pull requests: **Read-only**
   - Issues: **Read and write**
   - Metadata: **Read-only**
 - Subscribed webhook events:

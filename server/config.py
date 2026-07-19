@@ -69,16 +69,16 @@ class Settings:
     github_private_key_path: str = os.getenv("GITHUB_PRIVATE_KEY_PATH", "")
     github_api_base_url: str = os.getenv("GITHUB_API_BASE_URL", "https://api.github.com")
     github_label_writeback_enabled: bool = (
-        os.getenv("GITHUB_LABEL_WRITEBACK_ENABLED", "true").lower() == "true"
+        os.getenv("GITHUB_LABEL_WRITEBACK_ENABLED", "false").lower() == "true"
     )
     github_auto_create_labels: bool = (
-        os.getenv("GITHUB_AUTO_CREATE_LABELS", "true").lower() == "true"
+        os.getenv("GITHUB_AUTO_CREATE_LABELS", "false").lower() == "true"
     )
     github_writeback_timeout_seconds: float = float(
         os.getenv("GITHUB_WRITEBACK_TIMEOUT_SECONDS", "30")
     )
     github_duplicate_comments_enabled: bool = (
-        os.getenv("GITHUB_DUPLICATE_COMMENTS_ENABLED", "true").lower() == "true"
+        os.getenv("GITHUB_DUPLICATE_COMMENTS_ENABLED", "false").lower() == "true"
     )
     monitored_repositories: str = os.getenv("MONITORED_REPOSITORIES", "")
 
@@ -127,6 +127,23 @@ class Settings:
     dashboard_allowed_origins: str = os.getenv(
         "DASHBOARD_ALLOWED_ORIGINS",
         "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173",
+    )
+    velocity_window_hours: int = int(os.getenv("VELOCITY_WINDOW_HOURS", "24"))
+    velocity_suspicion_count_threshold: int = int(
+        os.getenv("VELOCITY_SUSPICION_COUNT_THRESHOLD", "10")
+    )
+    velocity_suspicion_floor: int = int(os.getenv("VELOCITY_SUSPICION_FLOOR", "70"))
+    github_enrichment_enabled: bool = _env_bool("GITHUB_ENRICHMENT_ENABLED", False)
+    pr_diff_max_files: int = int(os.getenv("PR_DIFF_MAX_FILES", "20"))
+    pr_diff_excerpt_max_chars: int = int(os.getenv("PR_DIFF_EXCERPT_MAX_CHARS", "5000"))
+    webhook_processing_stale_seconds: int = int(
+        os.getenv("WEBHOOK_PROCESSING_STALE_SECONDS", "900")
+    )
+    github_readiness_cache_seconds: int = int(
+        os.getenv("GITHUB_READINESS_CACHE_SECONDS", "300")
+    )
+    github_readiness_timeout_seconds: float = float(
+        os.getenv("GITHUB_READINESS_TIMEOUT_SECONDS", "5")
     )
     webhook_retention_days: int = int(os.getenv("WEBHOOK_RETENTION_DAYS", "30"))
     contribution_body_retention_days: int = int(

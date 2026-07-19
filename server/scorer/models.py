@@ -5,6 +5,10 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 
+MAX_MODEL_SUGGESTED_LABELS = 10
+MAX_MODEL_SUGGESTED_LABEL_LENGTH = 50
+
+
 class ContributionInput(BaseModel):
     kind: str
     action: str
@@ -17,6 +21,11 @@ class ContributionInput(BaseModel):
     files_changed: int | None = None
     author_account_age_days: int | None = None
     author_previous_contributions: int | None = None
+    additions: int | None = None
+    deletions: int | None = None
+    changed_filenames: list[str] | None = None
+    diff_excerpt: str | None = None
+    author_recent_contributions: int | None = None
 
     @classmethod
     def from_event(cls, event: dict[str, Any]) -> "ContributionInput":
@@ -29,6 +38,9 @@ class ContributionInput(BaseModel):
             author=event.get("author"),
             number=event["number"],
             html_url=event.get("html_url"),
+            files_changed=event.get("files_changed"),
+            additions=event.get("additions"),
+            deletions=event.get("deletions"),
         )
 
 
@@ -60,8 +72,18 @@ class RawScorecard(BaseModel):
         if value is None:
             return []
         if isinstance(value, str):
-            return [value]
-        return [str(item).strip() for item in value if str(item).strip()]
+            value = [value]
+
+        normalized: list[str] = []
+        for item in value:
+            label = str(item).strip()
+            if not label or len(label) > MAX_MODEL_SUGGESTED_LABEL_LENGTH:
+                continue
+            if label not in normalized:
+                normalized.append(label)
+            if len(normalized) >= MAX_MODEL_SUGGESTED_LABELS:
+                break
+        return normalized
 
 
 class ScoreResult(BaseModel):
@@ -75,4 +97,3 @@ class ScoreResult(BaseModel):
     provider: str
     model: str
     prompt_version: str
-

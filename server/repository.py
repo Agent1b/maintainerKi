@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 from uuid import uuid4
 
-from sqlalchemy import case, delete, func, or_, select, update
+from sqlalchemy import and_, case, delete, func, or_, select, update
 
+from server.config import settings
 from server.db import session_scope
 from server.duplicates.models import DuplicateDetectionResult, EmbeddingResult
 from server.models.tables import ContributionRecord, ScoringFeedbackRecord, WebhookDeliveryRecord
@@ -47,12 +49,19 @@ def _effective_labels(record: ContributionRecord) -> list[str]:
     return _deserialize_labels(record.suggested_labels_json)
 
 
-def _find_record(session, event: dict[str, Any]) -> ContributionRecord | None:
+def _find_record(
+    session,
+    event: dict[str, Any],
+    *,
+    for_update: bool = False,
+) -> ContributionRecord | None:
     stmt = select(ContributionRecord).where(
         ContributionRecord.repository == (event.get("repository") or "unknown/unknown"),
         ContributionRecord.kind == event["kind"],
         ContributionRecord.number == event["number"],
     )
+    if for_update:
+        stmt = stmt.with_for_update()
     return session.execute(stmt).scalar_one_or_none()
 
 
@@ -100,12 +109,18 @@ def _event_content_fingerprint(event: dict[str, Any]) -> str:
         "repository_id": event.get("repository_id"),
         "kind": event.get("kind"),
         "number": event.get("number"),
+        "action": event.get("action"),
         "title": event.get("title") or "",
         "body": event.get("body") or "",
         "html_url": event.get("html_url") or "",
+        "head_sha": event.get("head_sha"),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _escape_like_pattern(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def register_webhook_delivery(
@@ -129,7 +144,7 @@ def register_webhook_delivery(
                 "delivery_id": normalized_delivery_id,
             }
 
-        record = _find_record(session, event)
+        record = _find_record(session, event, for_update=True)
         if (
             record is not None
             and record.content_fingerprint == fingerprint
@@ -209,42 +224,72 @@ def register_webhook_delivery(
         }
 
 
+_REQUEABLE_QUEUED_STATUSES = ("accepted", "queue_failed", "failed")
+_REQUEABLE_QUEUE_FAILED_STATUSES = ("accepted", "queued")
+_CLAIMABLE_STATUSES = ("accepted", "queued", "queue_failed", "failed")
+
+
 def mark_webhook_delivery_queued(delivery_id: str) -> None:
     with session_scope() as session:
-        delivery = session.execute(
-            select(WebhookDeliveryRecord).where(WebhookDeliveryRecord.delivery_id == delivery_id)
-        ).scalar_one_or_none()
-        if delivery is None:
-            return
-        delivery.status = "queued"
-        delivery.error_message = None
+        session.execute(
+            update(WebhookDeliveryRecord)
+            .where(
+                WebhookDeliveryRecord.delivery_id == delivery_id,
+                WebhookDeliveryRecord.status.in_(_REQUEABLE_QUEUED_STATUSES),
+            )
+            .values(status="queued", error_message=None)
+        )
 
 
 def mark_webhook_delivery_queue_failed(delivery_id: str, error_message: str) -> None:
     with session_scope() as session:
-        delivery = session.execute(
-            select(WebhookDeliveryRecord).where(WebhookDeliveryRecord.delivery_id == delivery_id)
-        ).scalar_one_or_none()
-        if delivery is None:
-            return
-        delivery.status = "queue_failed"
-        delivery.error_message = error_message
+        session.execute(
+            update(WebhookDeliveryRecord)
+            .where(
+                WebhookDeliveryRecord.delivery_id == delivery_id,
+                WebhookDeliveryRecord.status.in_(_REQUEABLE_QUEUE_FAILED_STATUSES),
+            )
+            .values(status="queue_failed", error_message=error_message)
+        )
 
 
 def claim_webhook_delivery(delivery_id: str) -> dict[str, Any] | None:
+    now = _utc_now()
+    stale_cutoff = now - timedelta(seconds=settings.webhook_processing_stale_seconds)
+
     with session_scope() as session:
+        claim_result = session.execute(
+            update(WebhookDeliveryRecord)
+            .where(
+                WebhookDeliveryRecord.delivery_id == delivery_id,
+                or_(
+                    WebhookDeliveryRecord.status.in_(_CLAIMABLE_STATUSES),
+                    and_(
+                        WebhookDeliveryRecord.status == "processing",
+                        WebhookDeliveryRecord.processing_started_at.is_not(None),
+                        WebhookDeliveryRecord.processing_started_at < stale_cutoff,
+                    ),
+                ),
+            )
+            .values(status="processing", processing_started_at=now, error_message=None)
+        )
+        if claim_result.rowcount != 1:
+            return None
+
         delivery = session.execute(
             select(WebhookDeliveryRecord).where(WebhookDeliveryRecord.delivery_id == delivery_id)
         ).scalar_one_or_none()
         if delivery is None:
             return None
-        if delivery.status in {"processed", "ignored_duplicate_content", "processing"}:
-            return None
-        delivery.status = "processing"
-        delivery.processing_started_at = _utc_now()
-        delivery.error_message = None
-        payload = json.loads(delivery.payload_json)
+
+        try:
+            payload = json.loads(delivery.payload_json)
+        except json.JSONDecodeError:
+            payload = None
         if not isinstance(payload, dict):
+            delivery.status = "failed"
+            delivery.processed_at = now
+            delivery.error_message = "Webhook delivery payload was not a JSON object."
             return None
         return payload
 
@@ -278,10 +323,20 @@ def list_retriable_webhook_delivery_ids(
     statuses: tuple[str, ...] = ("accepted", "queue_failed", "failed"),
     limit: int = 100,
 ) -> list[str]:
+    stale_cutoff = _utc_now() - timedelta(seconds=settings.webhook_processing_stale_seconds)
     with session_scope() as session:
         rows = session.execute(
             select(WebhookDeliveryRecord.delivery_id)
-            .where(WebhookDeliveryRecord.status.in_(statuses))
+            .where(
+                or_(
+                    WebhookDeliveryRecord.status.in_(statuses),
+                    and_(
+                        WebhookDeliveryRecord.status == "processing",
+                        WebhookDeliveryRecord.processing_started_at.is_not(None),
+                        WebhookDeliveryRecord.processing_started_at < stale_cutoff,
+                    ),
+                )
+            )
             .order_by(WebhookDeliveryRecord.queued_at.asc())
             .limit(limit)
         ).all()
@@ -294,9 +349,16 @@ def persist_scored_contribution(
     *,
     embedding_result: EmbeddingResult | None = None,
     duplicate_result: DuplicateDetectionResult | None = None,
-) -> None:
+) -> bool:
+    event_fingerprint = _event_content_fingerprint(event)
     with session_scope() as session:
-        record = _find_record(session, event)
+        record = _find_record(session, event, for_update=True)
+        if (
+            record is not None
+            and record.content_fingerprint is not None
+            and record.content_fingerprint != event_fingerprint
+        ):
+            return False
         if record is None:
             record = ContributionRecord(
                 repository=event.get("repository") or "unknown/unknown",
@@ -317,7 +379,7 @@ def persist_scored_contribution(
 
         _apply_event_snapshot(record, event)
         record.status = "scored"
-        record.content_fingerprint = _event_content_fingerprint(event)
+        record.content_fingerprint = event_fingerprint
         record.quality_score = score.quality
         record.relevance_score = score.relevance
         record.completeness_score = score.completeness
@@ -351,11 +413,19 @@ def persist_scored_contribution(
             record.top_duplicate_similarity = None
             record.duplicate_checked_at = None
         record.scored_at = _utc_now()
+        return True
 
 
-def persist_failed_contribution(event: dict[str, Any], error_message: str) -> None:
+def persist_failed_contribution(event: dict[str, Any], error_message: str) -> bool:
+    event_fingerprint = _event_content_fingerprint(event)
     with session_scope() as session:
-        record = _find_record(session, event)
+        record = _find_record(session, event, for_update=True)
+        if (
+            record is not None
+            and record.content_fingerprint is not None
+            and record.content_fingerprint != event_fingerprint
+        ):
+            return False
         if record is None:
             record = ContributionRecord(
                 repository=event.get("repository") or "unknown/unknown",
@@ -376,16 +446,29 @@ def persist_failed_contribution(event: dict[str, Any], error_message: str) -> No
 
         _apply_event_snapshot(record, event)
         record.status = "failed"
-        record.content_fingerprint = _event_content_fingerprint(event)
+        record.content_fingerprint = event_fingerprint
         record.error_message = error_message
         record.scored_at = _utc_now()
+        return True
+
+
+@contextmanager
+def current_contribution_snapshot(event: dict[str, Any]):  # noqa: ANN201
+    """Hold the contribution row lock while current-snapshot side effects run."""
+    event_fingerprint = _event_content_fingerprint(event)
+    with session_scope() as session:
+        record = _find_record(session, event, for_update=True)
+        yield bool(record is not None and record.content_fingerprint == event_fingerprint)
 
 
 def list_recent_contributions(limit: int = 20) -> list[dict[str, Any]]:
     with session_scope() as session:
         stmt = (
             select(ContributionRecord)
-            .order_by(ContributionRecord.scored_at.desc(), ContributionRecord.received_at.desc())
+            .order_by(
+                ContributionRecord.scored_at.desc().nullslast(),
+                ContributionRecord.received_at.desc(),
+            )
             .limit(limit)
         )
         records = session.execute(stmt).scalars().all()
@@ -481,101 +564,119 @@ def list_repository_duplicate_candidates(
     return items
 
 
+def _repository_summary_stmt(thresholds):  # noqa: ANN001
+    return select(
+        ContributionRecord.repository_id,
+        ContributionRecord.repository,
+        func.count(ContributionRecord.id).label("contribution_count"),
+        func.sum(case((ContributionRecord.status == "scored", 1), else_=0)).label(
+            "scored_count"
+        ),
+        func.sum(
+            case((ContributionRecord.possible_duplicate.is_(True), 1), else_=0)
+        ).label("duplicate_count"),
+        func.sum(
+            case(
+                (
+                    func.coalesce(ContributionRecord.suspicion_score, 0)
+                    >= thresholds.suspicious_score,
+                    1,
+                ),
+                else_=0,
+            )
+        ).label("suspicious_count"),
+        func.sum(case((ContributionRecord.status == "pending", 1), else_=0)).label(
+            "pending_count"
+        ),
+        func.max(ContributionRecord.received_at).label("last_received_at"),
+    ).group_by(ContributionRecord.repository_id, ContributionRecord.repository)
+
+
+def _comparable_timestamp(value: datetime | None) -> datetime:
+    # SQLite's DateTime(timezone=True) columns can round-trip as either naive or
+    # tz-aware Python datetimes depending on how the row was written (ORM bind vs.
+    # raw SQL), so normalize to naive UTC before comparing to avoid TypeError:
+    # can't compare offset-naive and offset-aware datetimes.
+    if value is None:
+        return datetime.min
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _merge_repository_groups(rows: Iterable[Any]) -> dict[int, dict[str, Any]]:
+    # A GitHub repository rename creates a second (repository_id, repository) group
+    # for the same id. Merge those groups here instead of relying on SQL grouping
+    # (or `.one_or_none()`) to return a single row per repository id.
+    merged: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        repo_id = row.repository_id
+        entry = merged.get(repo_id)
+        if entry is None:
+            merged[repo_id] = {
+                "id": repo_id,
+                "name": row.repository,
+                "contribution_count": int(row.contribution_count or 0),
+                "scored_count": int(row.scored_count or 0),
+                "duplicate_count": int(row.duplicate_count or 0),
+                "suspicious_count": int(row.suspicious_count or 0),
+                "pending_count": int(row.pending_count or 0),
+                "last_received_at": row.last_received_at,
+            }
+            continue
+        entry["contribution_count"] += int(row.contribution_count or 0)
+        entry["scored_count"] += int(row.scored_count or 0)
+        entry["duplicate_count"] += int(row.duplicate_count or 0)
+        entry["suspicious_count"] += int(row.suspicious_count or 0)
+        entry["pending_count"] += int(row.pending_count or 0)
+        if row.last_received_at is not None and (
+            entry["last_received_at"] is None
+            or _comparable_timestamp(row.last_received_at)
+            > _comparable_timestamp(entry["last_received_at"])
+        ):
+            entry["last_received_at"] = row.last_received_at
+            entry["name"] = row.repository
+    return merged
+
+
+def _serialize_repository_summary(entry: dict[str, Any]) -> dict[str, Any]:
+    last_received_at = entry["last_received_at"]
+    return {
+        **entry,
+        "last_received_at": last_received_at.isoformat() if last_received_at else None,
+    }
+
+
 def list_repositories() -> list[dict[str, Any]]:
     thresholds = get_triage_thresholds()
     with session_scope() as session:
-        stmt = (
-            select(
-                ContributionRecord.repository_id,
-                ContributionRecord.repository,
-                func.count(ContributionRecord.id).label("contribution_count"),
-                func.sum(
-                    case((ContributionRecord.status == "scored", 1), else_=0)
-                ).label("scored_count"),
-                func.sum(
-                    case((ContributionRecord.possible_duplicate.is_(True), 1), else_=0)
-                ).label("duplicate_count"),
-                func.sum(
-                    case(
-                        (
-                            func.coalesce(ContributionRecord.suspicion_score, 0)
-                            >= thresholds.suspicious_score,
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ).label("suspicious_count"),
-                func.sum(
-                    case((ContributionRecord.status == "pending", 1), else_=0)
-                ).label("pending_count"),
-                func.max(ContributionRecord.received_at).label("last_received_at"),
-            )
-            .where(ContributionRecord.repository_id.is_not(None))
-            .group_by(ContributionRecord.repository_id, ContributionRecord.repository)
-            .order_by(func.max(ContributionRecord.received_at).desc())
+        stmt = _repository_summary_stmt(thresholds).where(
+            ContributionRecord.repository_id.is_not(None)
         )
         rows = session.execute(stmt).all()
 
-    return [
-        {
-            "id": row.repository_id,
-            "name": row.repository,
-            "contribution_count": int(row.contribution_count or 0),
-            "scored_count": int(row.scored_count or 0),
-            "duplicate_count": int(row.duplicate_count or 0),
-            "suspicious_count": int(row.suspicious_count or 0),
-            "pending_count": int(row.pending_count or 0),
-            "last_received_at": row.last_received_at.isoformat() if row.last_received_at else None,
-        }
-        for row in rows
-    ]
+    merged = _merge_repository_groups(rows)
+    ordered = sorted(
+        merged.values(),
+        key=lambda entry: _comparable_timestamp(entry["last_received_at"]),
+        reverse=True,
+    )
+    return [_serialize_repository_summary(entry) for entry in ordered]
 
 
 def get_repository_summary(repo_id: int) -> dict[str, Any] | None:
     thresholds = get_triage_thresholds()
     with session_scope() as session:
-        row = session.execute(
-            select(
-                ContributionRecord.repository_id,
-                ContributionRecord.repository,
-                func.count(ContributionRecord.id).label("contribution_count"),
-                func.sum(case((ContributionRecord.status == "scored", 1), else_=0)).label(
-                    "scored_count"
-                ),
-                func.sum(
-                    case((ContributionRecord.possible_duplicate.is_(True), 1), else_=0)
-                ).label("duplicate_count"),
-                func.sum(
-                    case(
-                        (
-                            func.coalesce(ContributionRecord.suspicion_score, 0)
-                            >= thresholds.suspicious_score,
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ).label("suspicious_count"),
-                func.sum(case((ContributionRecord.status == "pending", 1), else_=0)).label(
-                    "pending_count"
-                ),
-                func.max(ContributionRecord.received_at).label("last_received_at"),
-            )
-            .where(ContributionRecord.repository_id == repo_id)
-            .group_by(ContributionRecord.repository_id, ContributionRecord.repository)
-        ).one_or_none()
+        stmt = _repository_summary_stmt(thresholds).where(
+            ContributionRecord.repository_id == repo_id
+        )
+        rows = session.execute(stmt).all()
 
-    if row is None:
+    if not rows:
         return None
-    return {
-        "id": row.repository_id,
-        "name": row.repository,
-        "contribution_count": int(row.contribution_count or 0),
-        "scored_count": int(row.scored_count or 0),
-        "duplicate_count": int(row.duplicate_count or 0),
-        "suspicious_count": int(row.suspicious_count or 0),
-        "pending_count": int(row.pending_count or 0),
-        "last_received_at": row.last_received_at.isoformat() if row.last_received_at else None,
-    }
+
+    merged = _merge_repository_groups(rows)
+    return _serialize_repository_summary(merged[repo_id])
 
 
 def list_repo_inbox(
@@ -608,7 +709,7 @@ def list_repo_inbox(
             stmt = stmt.where(ContributionRecord.status == status)
         if kind:
             stmt = stmt.where(ContributionRecord.kind == kind)
-        if min_score is not None:
+        if min_score is not None and min_score > 0:
             stmt = stmt.where(func.coalesce(ContributionRecord.overall_score, -1) >= min_score)
         if duplicates_only:
             stmt = stmt.where(ContributionRecord.possible_duplicate.is_(True))
@@ -618,13 +719,21 @@ def list_repo_inbox(
             )
         lowered_search = (search or "").strip().lower()
         if lowered_search:
-            pattern = f"%{lowered_search}%"
+            pattern = f"%{_escape_like_pattern(lowered_search)}%"
             stmt = stmt.where(
                 or_(
-                    func.lower(func.coalesce(ContributionRecord.title, "")).like(pattern),
-                    func.lower(func.coalesce(ContributionRecord.body, "")).like(pattern),
-                    func.lower(func.coalesce(ContributionRecord.author, "")).like(pattern),
-                    func.lower(func.coalesce(ContributionRecord.html_url, "")).like(pattern),
+                    func.lower(func.coalesce(ContributionRecord.title, "")).like(
+                        pattern, escape="\\"
+                    ),
+                    func.lower(func.coalesce(ContributionRecord.body, "")).like(
+                        pattern, escape="\\"
+                    ),
+                    func.lower(func.coalesce(ContributionRecord.author, "")).like(
+                        pattern, escape="\\"
+                    ),
+                    func.lower(func.coalesce(ContributionRecord.html_url, "")).like(
+                        pattern, escape="\\"
+                    ),
                 )
             )
         stmt = stmt.order_by(
@@ -734,6 +843,7 @@ def plan_retention_purge(
                             ContributionRecord.body != "",
                             ContributionRecord.embedding_json.is_not(None),
                             ContributionRecord.duplicate_candidates_json.is_not(None),
+                            ContributionRecord.possible_duplicate.is_(True),
                         ),
                     )
                 ).scalar_one()
@@ -795,12 +905,15 @@ def apply_retention_purge(
                         ContributionRecord.body != "",
                         ContributionRecord.embedding_json.is_not(None),
                         ContributionRecord.duplicate_candidates_json.is_not(None),
+                        ContributionRecord.possible_duplicate.is_(True),
                     ),
                 )
                 .values(
                     body="",
                     embedding_json=None,
                     duplicate_candidates_json=None,
+                    possible_duplicate=False,
+                    top_duplicate_similarity=None,
                     updated_at=current_time,
                 )
             )
@@ -829,6 +942,69 @@ def get_contribution_writeback_target(contribution_id: int) -> dict[str, Any] | 
             "number": record.number,
             "labels": _effective_labels(record),
         }
+
+
+def count_recent_contributions_by_author(
+    author: str,
+    *,
+    within_hours: int,
+    exclude: tuple[str, str, int] | None = None,
+) -> int:
+    normalized_author = (author or "").strip().lower()
+    if not normalized_author:
+        return 0
+
+    cutoff = _utc_now() - timedelta(hours=within_hours)
+    with session_scope() as session:
+        stmt = (
+            select(func.count())
+            .select_from(ContributionRecord)
+            .where(
+                func.lower(ContributionRecord.author) == normalized_author,
+                ContributionRecord.received_at >= cutoff,
+            )
+        )
+        if exclude is not None:
+            exclude_repository, exclude_kind, exclude_number = exclude
+            stmt = stmt.where(
+                or_(
+                    ContributionRecord.repository != exclude_repository,
+                    ContributionRecord.kind != exclude_kind,
+                    ContributionRecord.number != exclude_number,
+                )
+            )
+        return int(session.execute(stmt).scalar_one())
+
+
+def count_author_contributions_in_repository(
+    author: str,
+    repository: str,
+    *,
+    exclude_kind: str | None = None,
+    exclude_number: int | None = None,
+) -> int:
+    normalized_author = (author or "").strip().lower()
+    if not normalized_author:
+        return 0
+
+    normalized_repository = (repository or "").strip().lower()
+    with session_scope() as session:
+        stmt = (
+            select(func.count())
+            .select_from(ContributionRecord)
+            .where(
+                func.lower(ContributionRecord.author) == normalized_author,
+                func.lower(ContributionRecord.repository) == normalized_repository,
+            )
+        )
+        if exclude_kind is not None and exclude_number is not None:
+            stmt = stmt.where(
+                or_(
+                    ContributionRecord.kind != exclude_kind,
+                    ContributionRecord.number != exclude_number,
+                )
+            )
+        return int(session.execute(stmt).scalar_one())
 
 
 def get_repo_stats(repo_id: int) -> dict[str, Any] | None:

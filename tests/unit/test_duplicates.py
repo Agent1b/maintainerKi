@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from server.duplicates.detector import cosine_similarity, detect_duplicates
 from server.duplicates.embedder import (
     build_duplicate_text,
@@ -37,7 +39,23 @@ def test_build_duplicate_text_combines_title_and_body() -> None:
 
 
 def test_cosine_similarity_for_identical_vectors_is_one() -> None:
-    assert cosine_similarity([0.5, 0.5], [0.5, 0.5]) == 0.5
+    assert cosine_similarity([0.5, 0.5], [0.5, 0.5]) == pytest.approx(1.0)
+
+
+def test_cosine_similarity_for_orthogonal_vectors_is_zero() -> None:
+    assert cosine_similarity([1.0, 0.0], [0.0, 1.0]) == 0.0
+
+
+def test_cosine_similarity_for_zero_vector_is_zero() -> None:
+    assert cosine_similarity([0.0, 0.0], [1.0, 0.0]) == 0.0
+
+
+def test_cosine_similarity_for_mismatched_lengths_is_zero() -> None:
+    assert cosine_similarity([1.0, 0.0], [1.0, 0.0, 0.0]) == 0.0
+
+
+def test_cosine_similarity_normalizes_unnormalized_vectors() -> None:
+    assert cosine_similarity([2.0, 0.0], [4.0, 0.0]) == 1.0
 
 
 def test_detect_duplicates_flags_high_similarity(monkeypatch) -> None:

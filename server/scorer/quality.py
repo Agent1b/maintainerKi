@@ -44,6 +44,26 @@ def derive_labels(scorecard: RawScorecard, overall_score: int) -> list[str]:
     return labels
 
 
+def apply_velocity_suspicion_floor(
+    scorecard: RawScorecard,
+    contribution: ContributionInput,
+) -> RawScorecard:
+    """Raise the suspicion score to a deterministic floor for flooding authors.
+
+    This runs after the LLM scores the contribution so a flood of low-effort
+    submissions is caught even if the provider is fooled by individually
+    plausible-looking content.
+    """
+    if (
+        contribution.author_recent_contributions is not None
+        and contribution.author_recent_contributions >= settings.velocity_suspicion_count_threshold
+    ):
+        floored_suspicion = max(scorecard.suspicion, settings.velocity_suspicion_floor)
+        if floored_suspicion != scorecard.suspicion:
+            return scorecard.model_copy(update={"suspicion": floored_suspicion})
+    return scorecard
+
+
 def score_contribution(
     contribution: ContributionInput,
     *,
@@ -51,6 +71,7 @@ def score_contribution(
 ) -> ScoreResult:
     resolved_provider = provider or get_scoring_provider()
     scorecard = resolved_provider.score(contribution)
+    scorecard = apply_velocity_suspicion_floor(scorecard, contribution)
     overall_score = compute_overall_score(scorecard)
 
     return ScoreResult(

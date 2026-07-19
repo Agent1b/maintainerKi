@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
 
 from server import db as db_module
@@ -140,6 +141,39 @@ def test_run_database_migrations_bootstraps_existing_pre_alembic_database(tmp_pa
     with get_engine().connect() as connection:
         revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
     assert revision == "20260627_000001"
+
+
+def test_run_database_migrations_bootstrap_stamps_head_without_replaying_upgrade(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "maintainerki_migration_bootstrap_head.db"
+    monkeypatch.setattr("server.db.settings.database_url", f"sqlite:///{db_path}")
+    monkeypatch.setattr("server.db.settings.app_env", "test")
+
+    _reset_database_state()
+    init_database()
+    _create_legacy_pre_alembic_schema()
+
+    upgrade_calls: list[str] = []
+    original_upgrade = db_module.command.upgrade
+
+    def _tracking_upgrade(config, revision, *args, **kwargs):
+        upgrade_calls.append(revision)
+        return original_upgrade(config, revision, *args, **kwargs)
+
+    monkeypatch.setattr(db_module.command, "upgrade", _tracking_upgrade)
+
+    run_database_migrations()
+
+    # The bootstrap path stamps the schema -- already built to match head by
+    # create_all() -- directly at head. It must not also call upgrade(),
+    # which would replay migrations against a schema that already has their
+    # columns/tables, crashing once a second revision exists.
+    assert upgrade_calls == []
+
+    alembic_config = db_module._build_alembic_config(db_module._engine_database_url(get_engine()))
+    head_revision = ScriptDirectory.from_config(alembic_config).get_current_head()
+    with get_engine().connect() as connection:
+        stamped_revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+    assert stamped_revision == head_revision
 
 
 def test_run_database_migrations_restores_missing_indexes_for_legacy_schema(tmp_path, monkeypatch) -> None:

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import time
+
 from fastapi.testclient import TestClient
 
 from server.auth import hash_password
 from server import db as db_module
+from server import health as health_module
 from server.db import ensure_schema_upgrades, get_engine, init_database
+from server.github_client import GitHubWritebackError
 from server.main import app, create_app
 from server.models import Base
 from server.rate_limit import rate_limiter
@@ -189,6 +193,135 @@ def test_readyz_returns_503_when_a_dependency_is_not_ready(monkeypatch) -> None:
         payload = response.json()
         assert payload["status"] == "degraded"
         assert payload["components"]["worker"]["ok"] is False
+
+
+def _configure_github_app_readiness_settings(monkeypatch, tmp_path, *, cache_seconds: int = 300) -> None:
+    key_path = tmp_path / "github-app-key.pem"
+    key_path.write_text("fake-private-key")
+    monkeypatch.setattr(health_module.settings, "github_app_id", "app-123")
+    monkeypatch.setattr(health_module.settings, "github_webhook_secret", "webhook-secret")
+    monkeypatch.setattr(health_module.settings, "github_private_key_path", str(key_path))
+    monkeypatch.setattr(health_module.settings, "app_env", "production")
+    monkeypatch.setattr(health_module.settings, "github_readiness_cache_seconds", cache_seconds)
+    monkeypatch.setattr(health_module.settings, "github_readiness_timeout_seconds", 5.0)
+
+
+def test_check_github_app_config_caches_successful_result_within_ttl(monkeypatch, tmp_path) -> None:
+    _configure_github_app_readiness_settings(monkeypatch, tmp_path)
+    health_module._reset_github_readiness_cache()
+
+    call_count = 0
+
+    class _FakeClient:
+        def get_authenticated_app(self) -> dict[str, str]:
+            nonlocal call_count
+            call_count += 1
+            return {"slug": "maintainerki"}
+
+    monkeypatch.setattr(health_module, "_build_github_readiness_client", lambda: _FakeClient())
+
+    clock = {"value": 1_000.0}
+    monkeypatch.setattr(health_module, "_now", lambda: clock["value"])
+
+    try:
+        first = health_module.check_github_app_config()
+        assert first["ok"] is True
+        assert first["app_slug"] == "maintainerki"
+        assert call_count == 1
+
+        clock["value"] += 10  # still well within the 300s TTL
+        second = health_module.check_github_app_config()
+        assert second["ok"] is True
+        assert call_count == 1  # cache hit; GitHub was not called again
+
+        clock["value"] += 400  # past the TTL
+        third = health_module.check_github_app_config()
+        assert third["ok"] is True
+        assert call_count == 2  # cache expired; GitHub was called again
+    finally:
+        health_module._reset_github_readiness_cache()
+
+
+def test_check_github_app_config_caches_failure_briefly(monkeypatch, tmp_path) -> None:
+    _configure_github_app_readiness_settings(monkeypatch, tmp_path)
+    health_module._reset_github_readiness_cache()
+
+    call_count = 0
+
+    class _FailingClient:
+        def get_authenticated_app(self) -> dict[str, str]:
+            nonlocal call_count
+            call_count += 1
+            raise GitHubWritebackError("GitHub is unavailable")
+
+    monkeypatch.setattr(health_module, "_build_github_readiness_client", lambda: _FailingClient())
+
+    clock = {"value": 2_000.0}
+    monkeypatch.setattr(health_module, "_now", lambda: clock["value"])
+
+    try:
+        first = health_module.check_github_app_config()
+        assert first["ok"] is False
+        assert call_count == 1
+
+        clock["value"] += 10  # within the fixed 30s failure TTL
+        second = health_module.check_github_app_config()
+        assert second["ok"] is False
+        assert call_count == 1
+
+        clock["value"] += 35  # past the 30s failure TTL
+        third = health_module.check_github_app_config()
+        assert third["ok"] is False
+        assert call_count == 2
+    finally:
+        health_module._reset_github_readiness_cache()
+
+
+def test_check_github_app_config_bounds_wait_when_github_is_slow(monkeypatch, tmp_path) -> None:
+    _configure_github_app_readiness_settings(monkeypatch, tmp_path)
+    monkeypatch.setattr(health_module.settings, "github_readiness_timeout_seconds", 0.2)
+    health_module._reset_github_readiness_cache()
+
+    class _SlowClient:
+        def get_authenticated_app(self) -> dict[str, str]:
+            time.sleep(1.0)
+            return {"slug": "maintainerki"}
+
+    monkeypatch.setattr(health_module, "_build_github_readiness_client", lambda: _SlowClient())
+
+    try:
+        started = time.monotonic()
+        result = health_module.check_github_app_config()
+        elapsed = time.monotonic() - started
+
+        assert result["ok"] is False
+        assert "Timed out" in result["error"]
+        assert elapsed < 1.0
+    finally:
+        health_module._reset_github_readiness_cache()
+
+
+def test_check_worker_reports_degraded_when_inspect_times_out(monkeypatch) -> None:
+    monkeypatch.setattr(health_module.settings, "celery_enabled", True)
+    monkeypatch.setattr(health_module.settings, "queue_provider", "celery")
+    monkeypatch.setattr(health_module.settings, "celery_broker_url", "redis://localhost:6379/0")
+    monkeypatch.setattr(health_module, "_CELERY_INSPECT_TIMEOUT_SECONDS", 0.1)
+
+    class _SlowInspect:
+        def ping(self) -> dict[str, dict[str, str]]:
+            time.sleep(1.0)
+            return {"worker@example": {"ok": "pong"}}
+
+    monkeypatch.setattr(health_module.celery_app.control, "inspect", lambda timeout=3: _SlowInspect())
+
+    started = time.monotonic()
+    result = health_module.check_worker()
+    elapsed = time.monotonic() - started
+
+    assert result["ok"] is False
+    assert result["required"] is True
+    assert "timed out" in result["error"]
+    assert elapsed < 0.5
 
 
 def test_debug_routes_return_404_when_disabled(monkeypatch) -> None:

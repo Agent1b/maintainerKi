@@ -59,6 +59,10 @@ def _pull_request_payload(action: str = "opened") -> dict[str, Any]:
             "body": "PR body",
             "html_url": "https://github.com/example/repo/pull/7",
             "user": {"login": "octocat"},
+            "head": {"sha": "abc123def456"},
+            "changed_files": 3,
+            "additions": 40,
+            "deletions": 5,
         },
         "repository": {
             "id": 501,
@@ -159,6 +163,10 @@ def test_accepts_issue_supported_actions_and_registers_then_enqueues(monkeypatch
                 "repository_id": 501,
                 "author": "octocat",
                 "sender": "sendercat",
+                "head_sha": None,
+                "files_changed": None,
+                "additions": None,
+                "deletions": None,
             },
         }
     ]
@@ -321,6 +329,10 @@ def test_accepts_pull_request_supported_actions_and_registers_then_enqueues(
                 "repository_id": 501,
                 "author": "octocat",
                 "sender": "sendercat",
+                "head_sha": "abc123def456",
+                "files_changed": 3,
+                "additions": 40,
+                "deletions": 5,
             },
         }
     ]
@@ -344,4 +356,92 @@ def test_ignores_unsupported_action_for_pull_request_event(monkeypatch) -> None:
     assert response.json()["reason"] == "unsupported_action"
     assert response.json()["event"] == "pull_request"
     assert response.json()["action"] == "closed"
+    assert captured == []
+
+
+@pytest.mark.parametrize("body", [b"null", b"[1, 2, 3]", b'"just a string"', b"42"])
+def test_rejects_non_dict_json_payload(monkeypatch, body: bytes) -> None:
+    monkeypatch.setattr("server.webhooks.github.settings.github_webhook_secret", WEBHOOK_SECRET)
+
+    response = client.post(
+        "/webhooks/github",
+        content=body,
+        headers=_headers("issues", body),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Webhook payload must be a JSON object."
+
+
+def test_ignores_issue_missing_number(monkeypatch) -> None:
+    monkeypatch.setattr("server.webhooks.github.settings.github_webhook_secret", WEBHOOK_SECRET)
+    captured: list[str] = []
+    monkeypatch.setattr("server.webhooks.github.enqueue_webhook_delivery", captured.append)
+    payload = _issue_payload("opened")
+    del payload["issue"]["number"]
+    body = _to_bytes(payload)
+
+    response = client.post(
+        "/webhooks/github",
+        content=body,
+        headers=_headers("issues", body),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ignored"
+    assert response.json()["reason"] == "missing_number"
+    assert response.json()["event"] == "issues"
+    assert captured == []
+
+
+def test_pull_request_missing_diff_stats_yields_none_without_crashing(monkeypatch) -> None:
+    monkeypatch.setattr("server.webhooks.github.settings.github_webhook_secret", WEBHOOK_SECRET)
+    captured_registrations: list[dict[str, Any]] = []
+    captured_enqueues: list[str] = []
+
+    def fake_register(*, event_name: str, delivery_id: str | None, event: dict[str, Any]) -> dict[str, Any]:
+        captured_registrations.append(
+            {"event_name": event_name, "delivery_id": delivery_id, "event": event}
+        )
+        return {"status": "accepted", "delivery_id": "delivery-123", "contribution_id": 7}
+
+    monkeypatch.setattr("server.webhooks.github.register_webhook_delivery", fake_register)
+    monkeypatch.setattr("server.webhooks.github.enqueue_webhook_delivery", captured_enqueues.append)
+    payload = _pull_request_payload("opened")
+    del payload["pull_request"]["changed_files"]
+    del payload["pull_request"]["additions"]
+    del payload["pull_request"]["deletions"]
+    body = _to_bytes(payload)
+
+    response = client.post(
+        "/webhooks/github",
+        content=body,
+        headers=_headers("pull_request", body),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "accepted"
+    assert captured_registrations[0]["event"]["files_changed"] is None
+    assert captured_registrations[0]["event"]["additions"] is None
+    assert captured_registrations[0]["event"]["deletions"] is None
+
+
+def test_ignores_pull_request_missing_number(monkeypatch) -> None:
+    monkeypatch.setattr("server.webhooks.github.settings.github_webhook_secret", WEBHOOK_SECRET)
+    captured: list[str] = []
+    monkeypatch.setattr("server.webhooks.github.enqueue_webhook_delivery", captured.append)
+    payload = _pull_request_payload("opened")
+    del payload["pull_request"]["number"]
+    body = _to_bytes(payload)
+
+    response = client.post(
+        "/webhooks/github",
+        content=body,
+        headers=_headers("pull_request", body),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ignored"
+    assert response.json()["reason"] == "missing_number"
+    assert response.json()["event"] == "pull_request"
     assert captured == []

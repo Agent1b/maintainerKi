@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import './App.css'
 import { ContributionDetail } from './components/ContributionDetail'
 import { ContributionList } from './components/ContributionList'
@@ -46,6 +46,17 @@ function App() {
   const [submittingFeedback, setSubmittingFeedback] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const reposRequestRef = useRef(0)
+  const inboxRequestRef = useRef(0)
+  const detailRequestRef = useRef(0)
+  const statsRequestRef = useRef(0)
+  const selectedContributionIdRef = useRef<number | null>(null)
+
+  function setSelectedContribution(contributionId: number | null) {
+    selectedContributionIdRef.current = contributionId
+    setSelectedContributionId(contributionId)
+  }
+
   useEffect(() => {
     void initializeApp()
   }, [])
@@ -57,19 +68,25 @@ function App() {
     return () => window.clearTimeout(handle)
   }, [filters.search])
 
+  const { status, kind, minScore, duplicatesOnly, suspiciousOnly } = filters
+
   const inboxFilters = useMemo(
     () => ({
-      ...filters,
+      status,
+      kind,
+      minScore,
+      duplicatesOnly,
+      suspiciousOnly,
       search: debouncedSearch || undefined,
     }),
-    [debouncedSearch, filters],
+    [status, kind, minScore, duplicatesOnly, suspiciousOnly, debouncedSearch],
   )
 
   useEffect(() => {
     if (selectedRepoId === null) {
       setInbox([])
       setStats(null)
-      setSelectedContributionId(null)
+      setSelectedContribution(null)
       setDetail(null)
       return
     }
@@ -98,72 +115,113 @@ function App() {
   )
 
   async function loadRepositories() {
+    const token = ++reposRequestRef.current
     try {
       setLoadingRepositories(true)
       setError(null)
       const nextRepos = await fetchRepositories()
+      if (reposRequestRef.current !== token) {
+        return
+      }
       setRepositories(nextRepos)
-      setSelectedRepoId((current) => current ?? nextRepos[0]?.id ?? null)
+      setSelectedRepoId((current) => {
+        if (current !== null && nextRepos.some((repo) => repo.id === current)) {
+          return current
+        }
+        return nextRepos[0]?.id ?? null
+      })
     } catch (caughtError) {
+      if (reposRequestRef.current !== token) {
+        return
+      }
       if (handleUnauthorized(caughtError)) {
         return
       }
       setError(getErrorMessage(caughtError))
     } finally {
-      setLoadingRepositories(false)
+      if (reposRequestRef.current === token) {
+        setLoadingRepositories(false)
+      }
     }
   }
 
   async function loadInbox(repoId: number, nextFilters: InboxFiltersType) {
+    const token = ++inboxRequestRef.current
     try {
       setLoadingInbox(true)
       setError(null)
       const items = await fetchInbox(repoId, nextFilters)
+      if (inboxRequestRef.current !== token) {
+        return
+      }
       setInbox(items)
-      setSelectedContributionId((current) => {
-        if (current && items.some((item) => item.id === current)) {
-          return current
-        }
-        return items[0]?.id ?? null
-      })
+      const current = selectedContributionIdRef.current
+      const nextSelected =
+        current !== null && items.some((item) => item.id === current)
+          ? current
+          : (items[0]?.id ?? null)
+      setSelectedContribution(nextSelected)
     } catch (caughtError) {
+      if (inboxRequestRef.current !== token) {
+        return
+      }
       if (handleUnauthorized(caughtError)) {
         return
       }
       setError(getErrorMessage(caughtError))
     } finally {
-      setLoadingInbox(false)
+      if (inboxRequestRef.current === token) {
+        setLoadingInbox(false)
+      }
     }
   }
 
   async function loadDetail(contributionId: number) {
+    const token = ++detailRequestRef.current
     try {
       setLoadingDetail(true)
       setError(null)
       const nextDetail = await fetchContributionDetail(contributionId)
+      if (detailRequestRef.current !== token) {
+        return
+      }
       setDetail(nextDetail)
     } catch (caughtError) {
+      if (detailRequestRef.current !== token) {
+        return
+      }
       if (handleUnauthorized(caughtError)) {
         return
       }
       setError(getErrorMessage(caughtError))
     } finally {
-      setLoadingDetail(false)
+      if (detailRequestRef.current === token) {
+        setLoadingDetail(false)
+      }
     }
   }
 
   async function loadStats(repoId: number) {
+    const token = ++statsRequestRef.current
     try {
       setLoadingStats(true)
       const nextStats = await fetchRepoStats(repoId)
+      if (statsRequestRef.current !== token) {
+        return
+      }
       setStats(nextStats)
     } catch (caughtError) {
+      if (statsRequestRef.current !== token) {
+        return
+      }
       if (handleUnauthorized(caughtError)) {
         return
       }
       setError(getErrorMessage(caughtError))
     } finally {
-      setLoadingStats(false)
+      if (statsRequestRef.current === token) {
+        setLoadingStats(false)
+      }
     }
   }
 
@@ -172,15 +230,19 @@ function App() {
     correct_labels: string[]
     notes: string | null
   }) {
-    if (selectedContributionId === null) {
+    if (detail === null) {
       return
     }
+
+    const contributionId = detail.id
 
     try {
       setSubmittingFeedback(true)
       setError(null)
-      const nextDetail = await submitFeedback(selectedContributionId, payload)
-      setDetail(nextDetail)
+      const nextDetail = await submitFeedback(contributionId, payload)
+      if (selectedContributionIdRef.current === contributionId) {
+        setDetail(nextDetail)
+      }
       if (selectedRepoId !== null) {
         await Promise.all([loadInbox(selectedRepoId, inboxFilters), loadStats(selectedRepoId)])
       }
@@ -192,6 +254,17 @@ function App() {
     } finally {
       setSubmittingFeedback(false)
     }
+  }
+
+  async function handleRefresh() {
+    const tasks: Promise<void>[] = [loadRepositories()]
+    if (selectedRepoId !== null) {
+      tasks.push(loadInbox(selectedRepoId, inboxFilters), loadStats(selectedRepoId))
+    }
+    if (selectedContributionId !== null) {
+      tasks.push(loadDetail(selectedContributionId))
+    }
+    await Promise.all(tasks)
   }
 
   async function initializeApp() {
@@ -264,7 +337,7 @@ function App() {
     setRepositories([])
     setSelectedRepoId(null)
     setInbox([])
-    setSelectedContributionId(null)
+    setSelectedContribution(null)
     setDetail(null)
     setStats(null)
   }
@@ -341,7 +414,7 @@ function App() {
           {authSession?.auth_enabled ? (
             <span className="muted auth-note">Signed in as {authSession.username ?? 'admin'}</span>
           ) : null}
-          <button type="button" className="secondary-button" onClick={() => void loadRepositories()}>
+          <button type="button" className="secondary-button" onClick={() => void handleRefresh()}>
             Refresh
           </button>
           {authSession?.auth_enabled ? (
@@ -375,7 +448,7 @@ function App() {
               items={inbox}
               loading={loadingRepositories || loadingInbox}
               selectedContributionId={selectedContributionId}
-              onSelect={setSelectedContributionId}
+              onSelect={setSelectedContribution}
             />
 
             <ContributionDetail

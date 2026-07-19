@@ -13,7 +13,7 @@ maintainerKi reads environment variables from:
 Minimum GitHub App requirements:
 
 - Repository permissions:
-  - Pull requests: **Read and write**
+  - Pull requests: **Read-only**
   - Issues: **Read and write**
   - Metadata: **Read-only**
 - Webhook event subscriptions:
@@ -29,11 +29,12 @@ Minimum GitHub App requirements:
 - `GITHUB_API_BASE_URL`
   - defaults to `https://api.github.com`
 - `GITHUB_LABEL_WRITEBACK_ENABLED`
-  - if `true`, maintainerKi writes suggested labels back to GitHub
+  - defaults to `false`; opt in to writing the fixed `maintainerki:*` triage labels back to GitHub
+  - free-form labels suggested by a scoring model are never written automatically
 - `GITHUB_AUTO_CREATE_LABELS`
-  - if `true`, missing labels are created automatically
+  - defaults to `false`; if explicitly enabled, missing approved `maintainerki:*` labels are created automatically
 - `GITHUB_DUPLICATE_COMMENTS_ENABLED`
-  - if `true`, likely duplicates get a GitHub comment listing similar items
+  - defaults to `false`; if explicitly enabled together with write-back, likely duplicates get a GitHub comment listing similar items
 
 ## Repository monitoring
 
@@ -71,6 +72,20 @@ MONITORED_REPOSITORIES=octo-org/docs,octo-org/cli
 - `MLX_MAX_TOKENS`
 - `MLX_USE_DEFAULT_CHAT_TEMPLATE`
 
+### Scoring enrichment
+
+Before scoring, each contribution is enriched with context so the model judges more than the description text:
+
+- `GITHUB_ENRICHMENT_ENABLED` (default `false`) — opt in to fetching the author's account age and, for pull requests, the changed-file list and a diff excerpt from the GitHub API. It requires GitHub App credentials and adds synchronous API work to each scoring job. When disabled or unconfigured, scoring proceeds with database-derived context only. Enrichment failures never block scoring.
+- `PR_DIFF_MAX_FILES` (default `20`) — maximum changed files fetched per pull request.
+- `PR_DIFF_EXCERPT_MAX_CHARS` (default `5000`) — cap on the diff excerpt included in the scoring prompt.
+
+Submission-velocity guard (works even with API enrichment disabled — it only uses the local database):
+
+- `VELOCITY_WINDOW_HOURS` (default `24`) — window for counting recent submissions by the same author across all monitored repositories.
+- `VELOCITY_SUSPICION_COUNT_THRESHOLD` (default `10`) — at this many submissions inside the window, the suspicion score is deterministically raised to the floor below, regardless of what the model returned. This catches floods of individually plausible-looking contributions.
+- `VELOCITY_SUSPICION_FLOOR` (default `70`) — the minimum suspicion score applied to flooding authors. With the default thresholds this triggers the `maintainerki:suspicious` label.
+
 ## Duplicate detection
 
 - `INSTALL_SEMANTIC_DUPLICATES`
@@ -82,6 +97,8 @@ MONITORED_REPOSITORIES=octo-org/docs,octo-org/cli
 - `DUPLICATE_MAX_CANDIDATES`
 - `DUPLICATE_LABEL_NAME`
 
+On each incoming event, detection compares the new contribution against every stored embedding for that repository — a linear scan computed in Python. That is comfortable for repositories with up to a few thousand scored contributions. pgvector is the planned scale path.
+
 ## Queue and database
 
 - `DATABASE_URL`
@@ -91,6 +108,12 @@ MONITORED_REPOSITORIES=octo-org/docs,octo-org/cli
 - `CELERY_BROKER_URL`
 - `CELERY_RESULT_BACKEND`
 - `CELERY_TASK_ALWAYS_EAGER`
+
+### Delivery reliability tuning
+
+- `WEBHOOK_PROCESSING_STALE_SECONDS` (default `900`) — a webhook delivery stuck in `processing` longer than this (for example because a worker crashed mid-scoring) becomes claimable again and is picked up by the retry sweep. Set it comfortably above your slowest expected scoring run.
+- `GITHUB_READINESS_CACHE_SECONDS` (default `300`) — how long `/readyz` caches a successful GitHub App authentication check before making a fresh API call. Failures are cached for 30 seconds regardless, so recovery is quick.
+- `GITHUB_READINESS_TIMEOUT_SECONDS` (default `5`) — hard time budget for the GitHub call made by `/readyz`, independent of the (longer) label writeback timeout. Keep it below your load balancer's probe timeout.
 
 ## Dashboard/API
 
@@ -127,6 +150,16 @@ For the hosted production path, the recommended default is:
 `make auth-secrets` prints `ADMIN_PASSWORD_HASH` and `SESSION_SECRET` already quoted for safe use in Compose-managed env files.
 
 `SESSION_NOT_BEFORE_EPOCH` is an emergency “invalidate every existing session before this timestamp” switch.
+
+## Single-process constraints
+
+maintainerKi is designed to run as one server process per deployment. Three pieces of state live in process memory rather than in a shared store:
+
+- the login rate limiter
+- the GitHub App installation token cache
+- the debug scoring buffer
+
+Running multiple server replicas or multiple uvicorn workers is not currently supported: each process keeps its own copies, so login rate limits are effectively divided by the number of processes and each process fetches its own installation tokens. Supporting multiple processes would first require moving this state to a shared store such as Redis.
 
 ## Abuse and privacy controls
 

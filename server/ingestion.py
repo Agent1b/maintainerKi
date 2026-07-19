@@ -8,9 +8,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from server.config import settings
 from server.duplicates.detector import detect_duplicates
 from server.duplicates.embedder import DuplicateEmbeddingError
+from server.enrichment import enrich_contribution
 from server.github_client import GitHubWritebackError, apply_score_labels, build_github_client
 from server.repository import (
     claim_webhook_delivery,
+    current_contribution_snapshot,
     list_retriable_webhook_delivery_ids,
     mark_webhook_delivery_failed,
     mark_webhook_delivery_processed,
@@ -31,8 +33,11 @@ DUPLICATE_COMMENT_MARKER = "<!-- maintainerki:possible-duplicate -->"
 
 def enqueue_webhook_delivery(delivery_id: str) -> bool:
     if _queue_expected():
+        # Mark the delivery queued before dispatch so a fast worker that claims and
+        # finishes the job first can't have its "processing"/"processed" status
+        # clobbered back to "queued" by this call landing afterwards.
+        mark_webhook_delivery_queued(delivery_id)
         if _enqueue_with_celery(delivery_id):
-            mark_webhook_delivery_queued(delivery_id)
             return True
         mark_webhook_delivery_queue_failed(
             delivery_id,
@@ -86,6 +91,7 @@ def process_contribution_event(event: dict[str, Any]) -> None:
     )
 
     contribution = ContributionInput.from_event(event)
+    contribution = enrich_contribution(contribution)
     try:
         score = score_contribution(contribution)
         embedding_result = None
@@ -107,7 +113,7 @@ def process_contribution_event(event: dict[str, Any]) -> None:
                 score.suggested_labels.append(duplicate_label)
 
         try:
-            persist_scored_contribution(
+            persisted = persist_scored_contribution(
                 event,
                 score,
                 embedding_result=embedding_result,
@@ -115,47 +121,75 @@ def process_contribution_event(event: dict[str, Any]) -> None:
             )
         except SQLAlchemyError:
             logger.exception(
-                "Database persistence failed for scored %s #%s in %s",
+                "Database persistence failed for scored %s #%s in %s; skipping label "
+                "writeback and letting the caller mark the delivery failed for retry.",
                 event["kind"],
                 event["number"],
                 event["repository"],
             )
-        record_scoring_result(
-            {
-                "status": "scored",
-                "repository": event["repository"],
-                "kind": event["kind"],
-                "number": event["number"],
-                "title": event["title"],
-                "score": score.model_dump(),
-                "duplicates": duplicate_result.model_dump() if duplicate_result else None,
-            }
-        )
-        writeback_applied = False
-        try:
-            github_client = build_github_client()
-            writeback_applied = apply_score_labels(event, score, client=github_client)
-            if (
-                writeback_applied
-                and duplicate_result
-                and duplicate_result.possible_duplicate
-                and settings.github_duplicate_comments_enabled
-                and github_client.is_configured()
-            ):
-                github_client.create_issue_comment(
-                    repository_full_name=event["repository"] or "unknown/unknown",
-                    number=event["number"],
-                    body=_build_duplicate_comment(duplicate_result),
-                    marker=DUPLICATE_COMMENT_MARKER,
+            raise
+        if not persisted:
+            logger.info(
+                "Discarding stale scoring result for %s #%s in %s because a newer "
+                "webhook snapshot is already registered.",
+                event["kind"],
+                event["number"],
+                event["repository"],
+            )
+            return
+        with current_contribution_snapshot(event) as is_current:
+            if not is_current:
+                logger.info(
+                    "Skipping stale side effects for %s #%s in %s because a newer "
+                    "webhook snapshot is already registered.",
+                    event["kind"],
+                    event["number"],
+                    event["repository"],
                 )
-        except GitHubWritebackError as exc:
-            logger.exception(
-                "GitHub label write-back failed for %s #%s in %s: %s",
-                event["kind"],
-                event["number"],
-                event["repository"],
-                exc,
+                return
+            record_scoring_result(
+                {
+                    "status": "scored",
+                    "repository": event["repository"],
+                    "kind": event["kind"],
+                    "number": event["number"],
+                    "title": event["title"],
+                    "score": score.model_dump(),
+                    "duplicates": duplicate_result.model_dump() if duplicate_result else None,
+                }
             )
+            writeback_applied = False
+            try:
+                github_client = build_github_client()
+                writeback_applied = apply_score_labels(
+                    event,
+                    score,
+                    possible_duplicate=bool(
+                        duplicate_result and duplicate_result.possible_duplicate
+                    ),
+                    client=github_client,
+                )
+                if (
+                    writeback_applied
+                    and duplicate_result
+                    and duplicate_result.possible_duplicate
+                    and settings.github_duplicate_comments_enabled
+                    and github_client.is_configured()
+                ):
+                    github_client.create_issue_comment(
+                        repository_full_name=event["repository"] or "unknown/unknown",
+                        number=event["number"],
+                        body=_build_duplicate_comment(duplicate_result),
+                        marker=DUPLICATE_COMMENT_MARKER,
+                    )
+            except GitHubWritebackError as exc:
+                logger.exception(
+                    "GitHub label write-back failed for %s #%s in %s: %s",
+                    event["kind"],
+                    event["number"],
+                    event["repository"],
+                    exc,
+                )
         logger.info(
             "Scored %s #%s overall=%s suspicion=%s labels=%s provider=%s model=%s writeback=%s",
             event["kind"],
@@ -169,7 +203,7 @@ def process_contribution_event(event: dict[str, Any]) -> None:
         )
     except ScoringProviderError as exc:
         try:
-            persist_failed_contribution(event, str(exc))
+            persisted = persist_failed_contribution(event, str(exc))
         except SQLAlchemyError:
             logger.exception(
                 "Database persistence failed for failed %s #%s in %s",
@@ -177,6 +211,16 @@ def process_contribution_event(event: dict[str, Any]) -> None:
                 event["number"],
                 event["repository"],
             )
+            raise
+        if not persisted:
+            logger.info(
+                "Discarding stale scoring failure for %s #%s in %s because a newer "
+                "webhook snapshot is already registered.",
+                event["kind"],
+                event["number"],
+                event["repository"],
+            )
+            return
         record_scoring_result(
             {
                 "status": "failed",
