@@ -57,16 +57,21 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           notes_file="docs/releases/${GITHUB_REF_NAME}.md"
-          if [ -f "$notes_file" ]; then
-            gh release create "$GITHUB_REF_NAME" \
-              dist/maintainerki-source-snapshot.tar.gz \
-              --verify-tag \
-              --notes-file "$notes_file" \
-              --title "$GITHUB_REF_NAME"
-          else
-            gh release create "$GITHUB_REF_NAME" \
-              dist/maintainerki-source-snapshot.tar.gz \
-              --verify-tag \
-              --generate-notes \
-              --title "$GITHUB_REF_NAME"
+          release_args=(
+            "$GITHUB_REF_NAME"
+            dist/maintainerki-source-snapshot.tar.gz
+            --verify-tag
+            --title "$GITHUB_REF_NAME"
+          )
+
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            release_args+=(--prerelease)
           fi
+
+          if [ -f "$notes_file" ]; then
+            release_args+=(--notes-file "$notes_file")
+          else
+            release_args+=(--generate-notes)
+          fi
+
+          gh release create "${release_args[@]}"

@@ -8,6 +8,12 @@ The project currently targets a self-hosted beta release model.
 
 - Ongoing polish, docs, and release automation work for the public beta repository.
 
+## v0.1.0-beta.2
+
+- Fixed GitHub Actions Dashboard E2E startup by resolving the backend Python executable from the absolute workspace path
+- Added workflow regression coverage for the E2E virtualenv contract
+- Marked hyphenated release tags, including beta versions, as GitHub prereleases automatically
+
 ## v0.1.0-beta.1
 
 - GitHub webhook intake with signature verification, repo filtering, and replay/idempotency handling

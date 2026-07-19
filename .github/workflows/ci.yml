@@ -109,7 +109,7 @@ jobs:
       - name: Run dashboard E2E
         working-directory: dashboard
         env:
-          PW_PYTHON: ../.venv/bin/python
+          PW_PYTHON: ${{ github.workspace }}/.venv/bin/python
         run: npm run e2e
 
   production-stack-smoke:
